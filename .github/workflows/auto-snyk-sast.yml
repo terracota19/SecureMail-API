@@ -1,11 +1,11 @@
-name: Example workflow for Python using Snyk
+name: Auto Snyk SAST
 on:
   push:
     branches:
       - development
 jobs:
   security:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - name: Checkout del código
         uses: actions/checkout@v4
