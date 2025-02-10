@@ -10,4 +10,5 @@ torch
 huggingface-hub
 transformers
 uvicorn
+xgboost
 pydantic[email]
