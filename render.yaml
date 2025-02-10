@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: phishing-email-detector
+    env: docker
+    plan: free
+    dockerfilePath: Dockerfile
+    branch: main

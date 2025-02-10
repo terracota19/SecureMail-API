@@ -1,0 +1,13 @@
+aiohttp
+fastapi
+joblib
+numpy
+pandas
+python-dotenv
+scikit_learn
+slowapi
+torch
+huggingface-hub
+transformers
+uvicorn
+pydantic[email]
