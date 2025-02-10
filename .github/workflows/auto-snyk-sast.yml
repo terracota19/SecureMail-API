@@ -3,8 +3,13 @@ on:
   push:
     branches:
       - development
+      
+permissions:
+  contents: write
+  security-events: write
+  
 jobs:
-  security:
+  Auto-Snyk-SAST:
     runs-on: self-hosted
     steps:
       - name: Checkout del código
