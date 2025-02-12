@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   Auto-snyk-test:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
 
     steps:
       - name: Checkout del código
@@ -23,16 +23,8 @@ jobs:
           source venv/bin/activate  
           pip install -r requirements.txt  
 
-      - name: Instalar Snyk CLI
-        run: |
-          
-          wget https://static.snyk.io/cli/v1.666.0/snyk-linux -O /usr/local/bin/snyk
-          wget https://static.snyk.io/cli/v1.666.0/snyk-linux.sha256 -O /tmp/snyk-linux.sha256
-          echo "5f6f800c1150047f2b6bebe8996db5f25167c8ddcb82741a72634606ba03bdc4  /usr/local/bin/snyk" | sha256sum -c -
-          chmod +x /usr/local/bin/snyk
-
       - name: Ejecutar Snyk Code (SAST)
-        run: snyk code test --sarif > snyk-code.sarif || true
+        run: snyk-linux code test --sarif > snyk-code.sarif || true
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_AUTH_TOKEN }}
 
