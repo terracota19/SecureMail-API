@@ -1,2 +1,4 @@
 * @terracota19
 .github/workflows/* @terracota19
+
+#.test/* @test_developers
