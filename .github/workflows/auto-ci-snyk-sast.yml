@@ -24,12 +24,14 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install pylint pytest
+        pip install pylint pytest httpx pytest-html
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        pip install httpx
 
     - name: Run pylint and generate report
       run: |
-        pylint $(git ls-files '*.py') > pylint_report.txt || true  
+        pylint test/api_fuzzing_test.py test/utils_test.py > pylint_report.txt || true
+
 
     - name: Upload pylint report
       uses: actions/upload-artifact@v4
@@ -37,12 +39,18 @@ jobs:
         name: pylint-report
         path: pylint_report.txt
 
-    - name: Run pytest and generate report
+    - name: Run pytest and generate HTML report
       run: |
-        pytest --maxfail=5 --disable-warnings --maxfail=1 --junitxml=pytest_report.xml || true  # Ejecutar pytest y no bloquear si falla
+        pytest --maxfail=5 --disable-warnings --html=pytest_report.html || true  # No bloquear el pipeline si pytest falla
 
-    - name: Upload pytest report
+    - name: Upload pytest HTML report
       uses: actions/upload-artifact@v4
       with:
         name: pytest-report
-        path: pytest_report.xml
+        path: pytest_report.html
+
+    - name: Show pytest results in job summary
+      if: always()
+      run: |
+        echo "## Pytest Results" >> $GITHUB_STEP_SUMMARY
+        echo "[Click here to view the pytest report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
