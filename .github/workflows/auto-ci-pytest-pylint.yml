@@ -41,7 +41,7 @@ jobs:
 
     - name: Run pytest on test/*.py
       run: |
-        pytest test/*.py --maxfail=5 --disable-warnings --html=pytest_report.html | tee pytest_report.txt || true
+        pytest test/*.py  --disable-warnings  | tee pytest_report.txt || true
 
     - name: Show pytest results in job summary
       if: always()
