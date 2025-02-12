@@ -48,6 +48,6 @@ jobs:
       run: |
         echo "## 📝 Pytest Execution Report" >> $GITHUB_STEP_SUMMARY
         echo '```' >> $GITHUB_STEP_SUMMARY
-        pytest_report.txt >> $GITHUB_STEP_SUMMARY 
+        cat pytest_report.txt >> $GITHUB_STEP_SUMMARY 
         echo '```' >> $GITHUB_STEP_SUMMARY
     
