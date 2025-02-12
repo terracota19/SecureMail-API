@@ -26,12 +26,10 @@ jobs:
         python -m pip install --upgrade pip
         pip install pylint pytest httpx pytest-html
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-        pip install httpx
 
     - name: Run pylint and generate report
       run: |
-        pylint test/api_fuzzing_test.py test/utils_test.py > pylint_report.txt || true
-
+        pylint test/*.py > pylint_report.txt || true  # Analiza todos los archivos de test/
 
     - name: Upload pylint report
       uses: actions/upload-artifact@v4
@@ -52,5 +50,5 @@ jobs:
     - name: Show pytest results in job summary
       if: always()
       run: |
-        echo "## Pytest Results" >> $GITHUB_STEP_SUMMARY
-        echo "[Click here to view the pytest report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
+        echo "## ✅ Pytest Execution Report" >> $GITHUB_STEP_SUMMARY
+        echo "📄 [Click here to view the pytest report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
