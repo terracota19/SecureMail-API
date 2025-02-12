@@ -16,7 +16,7 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-      
+
     - name: Set up Python 3.11
       uses: actions/setup-python@v3
       with:
@@ -25,12 +25,12 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install pylint pytest httpx 
+        pip install pylint pytest httpx
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
     - name: Run pylint on app.py
       run: |
-        pylint app.py | tee pylint_report.txt || true
+        pylint app.py | tee pylint_report.txt || true  # Analiza solo app.py y guarda el resultado
 
     - name: Show pylint results in job summary
       if: always()
@@ -42,18 +42,20 @@ jobs:
 
     - name: Run pytest on test/*.py
       run: |
-        pytest test/*.py --disable-warnings | tee pytest_report.txt || true
+        pytest test/*.py  --disable-warnings  | tee pytest_report.txt || true
 
     - name: Show pytest results in job summary
       if: always()
       run: |
         echo "## 📝 Pytest Execution Report" >> $GITHUB_STEP_SUMMARY
         echo '```' >> $GITHUB_STEP_SUMMARY
-        cat pytest_report.txt >> $GITHUB_STEP_SUMMARY 
+        cat pytest_report.txt >> $GITHUB_STEP_SUMMARY
         echo '```' >> $GITHUB_STEP_SUMMARY
 
-    - name: Install Snyk CLI
-      run: npm install -g snyk  # Instala Snyk CLI con npm
+    - name: Install Snyk CLI manually (using wget)
+      run: |
+        wget https://github.com/snyk/snyk/releases/download/v1.100.0/snyk-linux -O /usr/local/bin/snyk
+        chmod +x /usr/local/bin/snyk  # Cambia los permisos para hacerlo ejecutable
 
     - name: Run Snyk Code Analysis (SAST)
       if: success()  # Solo se ejecuta si pylint y pytest son exitosos
