@@ -1,1 +1,2 @@
 demo
+demo, adding new functionallity, testing SAST SNYK and testing added functionality + Guias de buen desarrolllo de codigo (PYLINT)
