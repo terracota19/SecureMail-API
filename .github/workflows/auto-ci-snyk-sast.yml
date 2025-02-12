@@ -27,28 +27,35 @@ jobs:
         pip install pylint pytest httpx pytest-html
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-    - name: Run pylint and generate report
+    - name: Run pylint
       run: |
-        pylint test/*.py > pylint_report.txt || true  # Analiza todos los archivos de test/
+        pylint test/*.py | tee pylint_report.txt || true  # Mostrar salida en GitHub y guardar en archivo
 
-    - name: Upload pylint report
-      uses: actions/upload-artifact@v4
-      with:
-        name: pylint-report
-        path: pylint_report.txt
+    - name: Show pylint results in job summary
+      if: always()
+      run: |
+        echo "## 📝 Pylint Report" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        cat pylint_report.txt >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
 
     - name: Run pytest and generate HTML report
       run: |
-        pytest --maxfail=5 --disable-warnings --html=pytest_report.html || true  # No bloquear el pipeline si pytest falla
-
-    - name: Upload pytest HTML report
-      uses: actions/upload-artifact@v4
-      with:
-        name: pytest-report
-        path: pytest_report.html
+        pytest --maxfail=5 --disable-warnings --html=pytest_report.html | tee pytest_report.txt || true  # Captura salida
 
     - name: Show pytest results in job summary
       if: always()
       run: |
-        echo "## ✅ Pytest Execution Report" >> $GITHUB_STEP_SUMMARY
-        echo "📄 [Click here to view the pytest report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
+        echo "## 📝 Pytest Execution Report" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        tail -n 20 pytest_report.txt >> $GITHUB_STEP_SUMMARY  # Muestra solo las últimas 20 líneas del reporte de pytest
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        echo "📄 [Click aquí para ver el reporte completo en HTML](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> $GITHUB_STEP_SUMMARY
+
+    - name: Upload reports as artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: reports
+        path: |
+          pylint_report.txt
+          pytest_report.html
