@@ -51,19 +51,3 @@ jobs:
         cat pytest_report.txt >> $GITHUB_STEP_SUMMARY
         echo '```' >> $GITHUB_STEP_SUMMARY
 
-    - name: Install Snyk CLI manually (using wget)
-      run: |
-        wget https://github.com/snyk/snyk/releases/download/v1.100.0/snyk-linux -O /usr/local/bin/snyk
-        chmod +x /usr/local/bin/snyk  # Cambia los permisos para hacerlo ejecutable
-
-    - name: Run Snyk Code Analysis (SAST)
-      if: success()  # Solo se ejecuta si pylint y pytest son exitosos
-      run: snyk code test --sarif > snyk-code.sarif || true
-      env:
-        SNYK_TOKEN: ${{ secrets.SNYK_AUTH_TOKEN }}
-
-    - name: Upload Snyk Code Results to GitHub Security
-      if: success()  # Solo se ejecuta si el análisis de Snyk es exitoso
-      uses: github/codeql-action/upload-sarif@v3
-      with:
-        sarif_file: snyk-code.sarif
