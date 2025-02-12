@@ -1,4 +1,4 @@
-name: Auto-CI-PYTEST-PYLINT-SNYK
+name: Auto-CI-PYTEST-PYLINT
 
 on:
   push:
