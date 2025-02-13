@@ -1,0 +1,37 @@
+name: Ejecutar Docker Bench y Mostrar Resultados en el Summary
+
+on:
+  push:
+    branches:
+      - main
+      - development
+  pull_request:
+    branches:
+      - main
+      - development
+
+jobs:
+  docker_bench_security:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configurar Docker
+        uses: docker/setup-buildx-action@v2
+
+      - name: Ejecutar Docker Bench Security
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            --volume $(pwd):/host \
+            docker/docker-bench-security > docker-bench-output.txt
+          
+      - name: Mostrar resultados de Docker Bench en el Summary
+        run: |
+          echo "## Resultados de Docker Bench Security" >> $GITHUB_ENV
+          echo "Fecha de análisis: $(date)" >> $GITHUB_ENV
+          echo "### Resumen del Análisis:" >> $GITHUB_ENV
+          
+          echo "\`\`\`" >> $GITHUB_ENV
+          cat docker-bench-output.txt >> $GITHUB_ENV
+          echo "\`\`\`" >> $GITHUB_ENV
+          
+          echo "::set-output name=docker-bench-results::$(cat docker-bench-output.txt)"
