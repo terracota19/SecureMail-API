@@ -44,7 +44,7 @@ In production, we continue with monitoring and securing the application:
 
 ## Design and Architecture
 
-- **Data Architecture**: We define the data flow within the application to minimize risks.
+- **Data Architecture**: We define the data flow within the application.
    ![dataflow](https://github.com/user-attachments/assets/031fe97e-8b09-4a9d-b254-2b63db6487cb)
 
 ---
