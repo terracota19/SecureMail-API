@@ -37,21 +37,21 @@ En producción, seguimos con el monitoreo y aseguramos la aplicación:
 
 - **Snyk**: Realizamos análisis de seguridad de dependencias en producción.
 - **Docker Bench Security**: Evaluamos la configuración de seguridad en los contenedores de producción.
-- **Render (PaaS)**: Despliegue continuo de la API.
+- **Render (PaaS)**: Despliegue continuo de la API mediante Docker.
 
 ---
 
 ## Diseño y Arquitectura
 
 - **Arquitectura de Datos**: Definimos el flujo de datos dentro de la aplicación para minimizar riesgos.
-   ![Data Flow](https://github.com/terracota19/SecureMail-Server/tree/main/images/dataflow.png)
+   ![dataflow](https://github.com/user-attachments/assets/031fe97e-8b09-4a9d-b254-2b63db6487cb)
 
 
 ---
 
 ## Trabajo Futuro
 
-- **(TODO)**: Configuración de un **ASPM** utilizando **ASOC**.
+- Configuración de un **ASPM** utilizando **ASOC**.
 - **SLSA**: Implementación de **Supply Chain Levels for Software Artifacts**.
 - **Modelado de Amenazas**: **OWASP Threat Dragon** para realizar un análisis de amenazas.
 
@@ -59,4 +59,4 @@ En producción, seguimos con el monitoreo y aseguramos la aplicación:
 
 ### Licencia
 
-Distribuido bajo la licencia MIT. Ver el archivo [LICENSE](./LICENSE) para más detalles.
+Distribuido bajo la licencia GPL-3.0 . Ver el archivo [LICENSE](./LICENSE) para más detalles.
