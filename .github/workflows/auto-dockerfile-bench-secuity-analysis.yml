@@ -30,7 +30,7 @@ jobs:
       - name: Ejecutar Docker Bench Security y guardar reporte
         run: |
           cd docker-bench-security
-          ./docker-bench-security.sh -i securemail:v1.0.0 > docker-bench-security-report.txt
+          ./docker-bench-security.sh -i securemail:v1.0.0 | tee ../docker-bench-security-report.txt
 
       - name: Mostrar resultados en el Summary
         run: |
