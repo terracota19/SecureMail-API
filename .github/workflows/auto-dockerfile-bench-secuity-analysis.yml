@@ -15,21 +15,28 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Configurar Docker
-        uses: docker/setup-buildx-action@v2
+      - name: Checkout del código
+        uses: actions/checkout@v4
 
-      - name: Ejecutar Docker Bench Security
+      - name: Clonar Docker Bench Security
+        run: git clone https://github.com/docker/docker-bench-security.git
+
+      - name: Construir la imagen de Docker Bench Security
         run: |
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-            --volume $(pwd):/host \
-            docker/docker-bench-security > docker-bench-output.txt
+          docker build -t securemail:v1.0.0 .
+          docker run -d -p 10000:10000 securemail:v1.0.0
+         
 
-      - name: Mostrar resultados de Docker Bench en el Summary
+      - name: Ejecutar Docker Bench Security y guardar reporte
+        run: |
+          cd docker-bench-security
+          ./docker-bench-security.sh -i securemail:v1.0.0 > docker-bench-security-report.txt
+
+      - name: Mostrar resultados en el Summary
         run: |
           echo "## Resultados de Docker Bench Security" >> $GITHUB_STEP_SUMMARY
           echo "Fecha de análisis: $(date)" >> $GITHUB_STEP_SUMMARY
           echo "### Resumen del Análisis:" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          cat docker-bench-output.txt >> $GITHUB_STEP_SUMMARY
+          cat docker-bench-security-report.txt >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-
