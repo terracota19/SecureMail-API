@@ -15,7 +15,12 @@
 
 ## Fase de Desarrollo
 
-- **Secure Coding**: Aplicamos principios de **código seguro**. Sanetizacion de entradas de usuarios {Pydantic} e internas (llamadas a APIs de tercero (Hybrid Analysis)).
+- **Secure Coding**: Aplicamos principios de **código seguro**.
+   - Sanetizacion de datos entrantes.
+        - Externas (Usuario) {Pydantic}. Generamos error si la API recibe datos malformados (fuzzing) o vacios.
+        - internas (llamadas a APIs de tercero (Hybrid Analysis))
+   - Uso de variables de entornos para secretos de la API.
+        - Para ello utilizamos Python-dotenv. 
 
 ---
 
