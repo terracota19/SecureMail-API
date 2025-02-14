@@ -1,4 +1,3 @@
-
 # SecureMail: Phishing Detection API with Machine Learning
 
 **SecureMail** is an API that uses **Machine Learning (ML)** techniques to assess whether an email is a phishing attempt. This API performs security analysis and provides predictions about suspicious emails.
@@ -16,19 +15,24 @@
 
 ## Development Phase
 
-- **Secure Coding**: We apply **secure coding** principles. Sanitization of user inputs {Pydantic} and internal inputs (third-party API calls like Hybrid Analysis).
+- **Secure Coding**: We apply **secure coding** principles.
+   - Sanitization of incoming data.
+        - External (User) {Pydantic}. We raise an error if the API receives malformed (fuzzing) or empty data.
+        - Internal (third-party API calls (Hybrid Analysis))
+   - Use of environment variables for API secrets.
+        - For this, we use Python-dotenv.
 
 ---
 
 ## CI/CD Phase
 
-During the continuous integration and continuous deployment process, we perform the following security tasks and tests:
+During continuous integration and continuous deployment, we perform the following security tasks and testing:
 
 ### Tools:
-- **Pylint**: Code review to ensure adherence to best practices.
-- **Pytest**: Testing API responses.
-- **Snyk**: Static Application Security Testing (SAST).
-- **Docker Bench Security**: Security review of Docker containers.
+- **Pylint**: Code review to ensure it follows best practices.
+- **Pytest**: Testing the API responses.
+- **Snyk**: Static security analysis (SAST).
+- **Docker Bench Security**: Reviewing security in Docker containers.
 
 ---
 
@@ -36,9 +40,9 @@ During the continuous integration and continuous deployment process, we perform 
 
 In production, we continue with monitoring and securing the application:
 
-- **Snyk**: Security analysis of dependencies in production.
-- **Docker Bench Security**: We assess the security configuration of production containers.
-- **Render (PaaS)**: Continuous deployment of the API via Docker.
+- **Snyk**: We perform dependency security analysis in production.
+- **Docker Bench Security**: We evaluate the security configuration of production containers.
+- **Render (PaaS)**: Continuous deployment of the API using Docker.
 
 ---
 
@@ -51,9 +55,9 @@ In production, we continue with monitoring and securing the application:
 
 ## Future Work
 
-- Set up an **ASPM** using **ASOC**.
-- **SLSA**: Implement **Supply Chain Levels for Software Artifacts**.
-- **Threat Modeling**: **OWASP Threat Dragon** for threat analysis.
+- Setting up an **ASPM** using **ASOC**.
+- **SLSA**: Implementing **Supply Chain Levels for Software Artifacts**.
+- **Threat Modeling**: Using **OWASP Threat Dragon** for threat analysis.
 
 ---
 
