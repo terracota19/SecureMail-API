@@ -38,5 +38,7 @@ jobs:
           echo "Fecha de análisis: $(date)" >> $GITHUB_STEP_SUMMARY
           echo "### Resumen del Análisis:" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          cat docker-bench-security-report.txt >> $GITHUB_STEP_SUMMARY
+          # Limpiar colores y formatos no deseados del archivo de reporte
+          sed 's/\x1b\[[0-9;]*m//g' docker-bench-security-report.txt >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
