@@ -10,13 +10,12 @@
 - [Fase de Producción](#fase-de-producción)
 - [Diseño y Arquitectura](#diseño-y-arquitectura)
 - [Trabajo Futuro](#trabajo-futuro)
-- [Contribuir](#contribuir)
 
 ---
 
 ## Fase de Desarrollo
 
-- **Secure Coding**: Aplicamos principios de **código seguro**, como el **principio de privilegios mínimos** (no se usan cuentas de root/admin durante el desarrollo).
+- **Secure Coding**: Aplicamos principios de **código seguro**. Sanetizacion de entradas de usuarios {Pydantic} e internas (llamadas a APIs de tercero (Hybrid Analysis)).
 
 ---
 
@@ -44,8 +43,9 @@ En producción, seguimos con el monitoreo y aseguramos la aplicación:
 
 ## Diseño y Arquitectura
 
-- **Modelado de Amenazas**: Utilizamos **OWASP Threat Dragon** para realizar un análisis de amenazas.
 - **Arquitectura de Datos**: Definimos el flujo de datos dentro de la aplicación para minimizar riesgos.
+   ![Data Flow](https://github.com/terracota19/SecureMail-Server/tree/main/images/dataflow.png)
+
 
 ---
 
@@ -53,18 +53,7 @@ En producción, seguimos con el monitoreo y aseguramos la aplicación:
 
 - **(TODO)**: Configuración de un **ASPM** utilizando **ASOC**.
 - **SLSA**: Implementación de **Supply Chain Levels for Software Artifacts**.
-
----
-
-## Contribuir
-
-Si deseas contribuir a **SecureMail**, sigue estos pasos:
-
-1. **Fork** el repositorio.
-2. Crea una nueva rama: `git checkout -b feature/nueva-caracteristica`.
-3. **Haz cambios** y realiza un commit.
-4. **Push** los cambios a tu fork.
-5. Abre un **Pull Request**.
+- **Modelado de Amenazas**: **OWASP Threat Dragon** para realizar un análisis de amenazas.
 
 ---
 
