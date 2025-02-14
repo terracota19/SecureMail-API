@@ -1,4 +1,4 @@
-name: GitHub Auto SAST Snyk Evaluation
+name: GitHub Auto SAST Snyk Evaluation on Production & Development
 
 on:
   workflow_run:
