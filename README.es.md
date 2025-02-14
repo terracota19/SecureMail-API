@@ -43,7 +43,7 @@ En producción, seguimos con el monitoreo y aseguramos la aplicación:
 
 ## Diseño y Arquitectura
 
-- **Arquitectura de Datos**: Definimos el flujo de datos dentro de la aplicación para minimizar riesgos.
+- **Arquitectura de Datos**: Definimos el flujo de datos dentro de la aplición.
    ![dataflow](https://github.com/user-attachments/assets/031fe97e-8b09-4a9d-b254-2b63db6487cb)
 
 
