@@ -1,0 +1,60 @@
+name: GitHub Auto SAST and SCA Snyk Evaluation on Production & Development
+
+on:
+  workflow_run:
+    workflows: ["Auto-CI-PYTEST-PYLINT"]
+    types:
+      - completed
+
+permissions:
+  contents: write
+  security-events: write
+
+jobs:
+  Auto-snyk-test:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Configurar entorno virtual y instalar dependencias
+        run: |
+          python3 -m venv venv  
+          source venv/bin/activate  
+          pip install -r requirements.txt  
+          
+#-------------------------------------------------------------------------------------------
+
+      - name: Ejecutar Snyk Code (SAST)
+        run: snyk-linux code test --sarif > snyk-code.sarif || true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_AUTH_TOKEN }}
+
+      - name: Subir resultados de Snyk Code (SAST) a GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: snyk-code.sarif
+          
+#-------------------------------------------------------------------------------------------
+
+      - name: Ejecutar Snyk Open Source (SCA)
+        run: snyk-linux test --json > snyk-sca.json || true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_AUTH_TOKEN }}
+
+      - name: Subir reporte de SCA a Snyk Web
+        run: snyk-linux monitor || true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_AUTH_TOKEN }}
+
+      - name: Subir resultados de Snyk como artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: snyk-reports
+          path: |
+            snyk-code.sarif
+            snyk-sca.json
+            
+#-------------------------------------------------------------------------------------------
+    
