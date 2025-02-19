@@ -23,9 +23,8 @@ jobs:
 
       - name: Construir la imagen de Docker Bench Security
         run: |
-          docker build -t securemail:v1.0.0 .
-          docker run -d -p 10000:10000 securemail:v1.0.0
-         
+          docker build -t securemail:v1.0.0 .  # Construir la imagen de tu aplicación
+          docker run -d -p 10000:10000 securemail:v1.0.0  # Ejecutar el contenedor de tu aplicación
 
       - name: Ejecutar Docker Bench Security y guardar reporte
         run: |
@@ -41,4 +40,3 @@ jobs:
           # Limpiar colores y formatos no deseados del archivo de reporte
           sed 's/\x1b\[[0-9;]*m//g' docker-bench-security-report.txt >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-
