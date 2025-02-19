@@ -3,7 +3,7 @@ FROM python:3.11-slim
 RUN groupadd -r appgroup && useradd -r -g appgroup appuser
 WORKDIR /secure.mail
 
-ENV VIRTUAL_ENV=opt/venv
+ENV VIRTUAL_ENV=/opt/venv
 RUN python3 -m venv $VIRTUAL_ENV
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
