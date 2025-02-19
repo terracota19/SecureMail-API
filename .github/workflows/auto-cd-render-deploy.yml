@@ -3,23 +3,32 @@ name: GitHub Auto Render CD Deployment
 on:
   push:
     branches:
-      - main  
+      - main
+      - development  
 
 jobs:
   Deploy-on-Render:
     runs-on: ubuntu-latest
 
     steps:
-     
       - name: Instalar Render CLI
         run: |
           curl -fsSL https://raw.githubusercontent.com/render-oss/cli/refs/heads/main/bin/install.sh | sh
-    
+
+      - name: Configurar variables según la rama
+        run: |
+          if [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo "RENDER_API_KEY=${{ secrets.RENDER_API_KEY }}" >> $GITHUB_ENV
+            echo "RENDER_SERVICE_ID=${{ secrets.RENDER_SERVICE_ID }}" >> $GITHUB_ENV
+          else
+            echo "RENDER_API_KEY=${{ secrets.RENDER_DEVELOPMENT_API_KEY }}" >> $GITHUB_ENV
+            echo "RENDER_SERVICE_ID=${{ secrets.RENDER_DEVELOPMENT_SERVICE_ID }}" >> $GITHUB_ENV
+          fi
 
       - name: Desplegar en Render
         env:
-          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
-          RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
+          RENDER_API_KEY: ${{ env.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ env.RENDER_SERVICE_ID }}
           CI: true
         run: |
-          render deploys create $RENDER_SERVICE_ID  --output json --confirm --wait
+          render deploys create $RENDER_SERVICE_ID --output json --confirm --wait
