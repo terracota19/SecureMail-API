@@ -22,6 +22,7 @@ jobs:
           RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
           CI: true
         run: |
+          render login
           render deploys create $RENDER_SERVICE_ID --output json --confirm --wait
 
       - name: Desplegar en Render (Development)
@@ -31,4 +32,5 @@ jobs:
           RENDER_DEVELOPMENT_SERVICE_ID: ${{ secrets.RENDER_DEVELOPMENT_SERVICE_ID }}
           CI: true
         run: |
+          render login
           render deploys create $RENDER_DEVELOPMENT_SERVICE_ID --output json --confirm --wait
