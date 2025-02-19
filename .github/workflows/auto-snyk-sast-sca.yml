@@ -21,17 +21,16 @@ jobs:
       - name: Configurar entorno virtual e instalar dependencias
         run: |
           python3 -m venv $HOME/venv  
-          export VIRTUAL_ENV=$HOME/venv
-          export PATH="$VIRTUAL_ENV/bin:$PATH"
-          source $VIRTUAL_ENV/bin/activate
+          source $HOME/venv/bin/activate
           pip install -r requirements.txt    
+
 
       - name: Ejecutar Snyk Code (SAST) y Snyk Open Source (SCA)
         run: |
-          export VIRTUAL_ENV=$HOME/venv
-          export PATH="$VIRTUAL_ENV/bin:$PATH"
-          snyk-linux code test --sarif > snyk-code.sarif || true
-          snyk-linux test --json > snyk-sca.json || true
+          set -o pipefail
+          source $HOME/venv/bin/activate
+          snyk code test --sarif > snyk-code.sarif || true
+          snyk test --json > snyk-sca.json || true
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_AUTH_TOKEN }}
 
