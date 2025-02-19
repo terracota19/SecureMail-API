@@ -29,8 +29,9 @@ jobs:
             -e HYBRID_ANALYSIS_API_URL=${{ secrets.HYBRID_ANALYSIS_API_URL }} \
             -e ML_MODEL_NAME_URI=${{ secrets.ML_MODEL_NAME_URI }} \
             --name securemail securemail:v1.0.0   
+          docker ps
           cd docker-bench-security
-          ./docker-bench-security.sh -i securemail:v1.0.0 | tee ../docker-bench-security-report.txt
+          ./docker-bench-security.sh -c securemail | tee ../docker-bench-security-report.txt
           
 
       - name: Mostrar resultados en el Summary
