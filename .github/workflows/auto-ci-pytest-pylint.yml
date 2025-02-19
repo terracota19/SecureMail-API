@@ -41,7 +41,7 @@ jobs:
 
     - name: Run pytest with environment variables
       env:
-        ML_MODEL_URI: ${{ secrets.ML_MODEL_URI }}
+        ML_MODEL_NAME_URI: ${{ secrets.ML_MODEL_NAME_URI }}
         HYBRID_ANALYSIS_API_KEY : ${{ secrets.HYBRID_ANALYSIS_API_KEY }}
         HYBRID_ANALYSIS_API_URL : ${{ secrets.HYBRID_ANALYSIS_API_URL }}
       run: |
