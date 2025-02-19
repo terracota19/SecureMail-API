@@ -1,11 +1,17 @@
 name: GitHub Auto SAST and SCA Snyk Evaluation on Production & Development
 
-on:
-  workflow_run:
-    workflows: ["Auto-CI-PYTEST-PYLINT"]
-    types:
-      - completed
+#on:
+ # workflow_run:
+  #  workflows: ["Auto-CI-PYTEST-PYLINT"]
+  #  types:
+   #   - completed
 
+on:
+  push:
+    branches:
+      - main
+      - development  
+      
 permissions:
   contents: write
   security-events: write
