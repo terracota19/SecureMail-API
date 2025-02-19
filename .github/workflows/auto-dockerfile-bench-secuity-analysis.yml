@@ -40,7 +40,7 @@ jobs:
           -v /var/lib:/var/lib:ro \
           -v /var/run/docker.sock:/var/run/docker.sock:ro \
           --label docker_bench_security \
-          docker-bench-security| tee ../docker-bench-security-report.txt
+          docker-bench-security | tee ../docker-bench-security-report.txt
           
 
       - name: Mostrar resultados en el Summary
