@@ -23,11 +23,8 @@ jobs:
 
       - name: Construir la imagen de Docker Bench Security
         run: |
-          docker build -t securemail:v1.0.0 .  # Construir la imagen de tu aplicación
-          docker run -d -p 10000:10000 securemail:v1.0.0  # Ejecutar el contenedor de tu aplicación
-
-      - name: Ejecutar Docker Bench Security y guardar reporte
-        run: |
+          docker build -t securemail:v1.0.0 .  
+          docker run -d -p 10000:10000 securemail:v1.0.0  
           cd docker-bench-security
           ./docker-bench-security.sh -i securemail:v1.0.0 | tee ../docker-bench-security-report.txt
 
