@@ -20,10 +20,11 @@ jobs:
 
       - name: Configurar entorno virtual e instalar dependencias
         run: |
-          python3 -m venv opt/venv  
-          echo "VIRTUAL_ENV=opt/venv" >> $GITHUB_ENV
-          echo "PATH=$VIRTUAL_ENV/bin:$PATH" >> $GITHUB_ENV
-          pip install -r requirements.txt  
+          python3 -m venv /opt/venv  
+          export VIRTUAL_ENV=/opt/venv
+          export PATH="$VIRTUAL_ENV/bin:$PATH"
+          source $VIRTUAL_ENV/bin/activate
+          pip install -r requirements.txt    
 
       - name: Ejecutar Snyk Code (SAST) y Snyk Open Source (SCA)
         run: |
