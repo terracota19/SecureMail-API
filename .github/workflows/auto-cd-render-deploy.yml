@@ -22,15 +22,15 @@ jobs:
           RENDER_SERVICE_ID: ${{ secrets.RENDER_SERVICE_ID }}
           CI: true
         run: |
-          render login $RENDER_API_KEY
+          render login 
           render deploys create $RENDER_SERVICE_ID --output json --confirm --wait
 
       - name: Desplegar en Render (Development)
         if: github.ref == 'refs/heads/development'
         env:
-          RENDER_DEVELOPMENT_API_KEY: ${{ secrets.RENDER_DEVELOPMENT_API_KEY }}
+          RENDER_API_KEY: ${{ secrets.RENDER_DEVELOPMENT_API_KEY }}
           RENDER_DEVELOPMENT_SERVICE_ID: ${{ secrets.RENDER_DEVELOPMENT_SERVICE_ID }}
           CI: true
         run: |
-          render login $RENDER_DEVELOPMENT_API_KEY
+          render login 
           render deploys create $RENDER_DEVELOPMENT_SERVICE_ID --output json --confirm --wait
