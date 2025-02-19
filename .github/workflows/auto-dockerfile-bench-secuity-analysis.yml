@@ -26,6 +26,7 @@ jobs:
           docker build -t securemail:v1.0.0 .  
           docker run -d -p 10000:10000 securemail:v1.0.0  
           cd docker-bench-security
+          ./docker-bench-security.sh -i securemail:v1.0.0 | tee ../docker-bench-security-report.txt
           
 
       - name: Mostrar resultados en el Summary
