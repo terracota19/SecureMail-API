@@ -13,7 +13,6 @@ on:
 jobs:
   docker_bench_security:
     runs-on: ubuntu-latest
-    #container: docker
 
     steps:
       - name: Checkout del código
@@ -38,17 +37,15 @@ jobs:
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
             -v $(pwd)/docker-bench-security:/docker-bench-security \
             docker/docker-bench-security:latest \
-            sh -c "cd /docker-bench-security && ./docker-bench-security.sh -i securemail-container | tee docker-bench-security-report.txt"
-            
-     
+            sh -c "./docker-bench-security.sh -i securemail-container | tee docker-bench-security/docker-bench-security-report.txt"
+
       - name: Display results in Summary
         run: |
-          cd /docker-bench-security
           echo "## Resultados de Docker Bench Security" >> $GITHUB_STEP_SUMMARY
           echo "Fecha de análisis: $(date)" >> $GITHUB_STEP_SUMMARY
           echo "### Resumen del Análisis:" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          sed 's/\x1B\[[0-9;]*[mK]//g' docker-bench-security-report.txt >> $GITHUB_STEP_SUMMARY
+          sed 's/\x1B\[[0-9;]*[mK]//g' docker-bench-security/docker-bench-security-report.txt >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
       - name: Stop and remove container
