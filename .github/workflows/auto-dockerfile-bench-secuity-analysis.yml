@@ -22,9 +22,6 @@ jobs:
       - name: Build securemail image
         run: docker build -t securemail:v1.0.0 .
 
-      - name: List images (CRITICAL DEBUGGING STEP - KEEP THIS)
-        run: docker images  # Check if securemail:v1.0.0 is listed
-
       - name: Run securemail container (detached)
         run: |
           docker run -d --name securemail-container \
@@ -44,8 +41,10 @@ jobs:
             sh -c "cd /docker-bench-security && ./docker-bench-security.sh -i securemail-container | tee docker-bench-security-report.txt"
 
       - name: Install ansi2txt
-        run: apt-get update && apt-get install -y ansi2txt
-
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ansi2txt
+          
       - name: Display results in Summary
         run: |
           echo "## Resultados de Docker Bench Security" >> $GITHUB_STEP_SUMMARY
