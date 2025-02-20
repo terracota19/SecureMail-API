@@ -12,21 +12,22 @@ on:
 jobs:
   docker_bench_security:
     runs-on: ubuntu-latest
-    container: docker # Use the official Docker image for actions
+    container: docker 
     steps:
       - name: Checkout del código
         uses: actions/checkout@v4
 
       - name: Build securemail image
         run: docker build -t securemail:v1.0.0 .
-
+     
       - name: Run securemail container (detached)
-        run: docker run -d --name securemail-container \
-             -e HYBRID_ANALYSIS_API_KEY=${{ secrets.HYBRID_ANALYSIS_API_KEY }} \
-             -e HYBRID_ANALYSIS_API_URL=${{ secrets.HYBRID_ANALYSIS_API_URL }} \
-             -e ML_MODEL_NAME_URI=${{ secrets.ML_MODEL_NAME_URI }} \
-             securemail:v1.0.0
-
+        run: |
+          docker run -d --name securemail-container \
+            -e HYBRID_ANALYSIS_API_KEY=${{ secrets.HYBRID_ANALYSIS_API_KEY }} \
+            -e HYBRID_ANALYSIS_API_URL=${{ secrets.HYBRID_ANALYSIS_API_URL }} \
+            -e ML_MODEL_NAME_URI=${{ secrets.ML_MODEL_NAME_URI }} \
+            securemail:v1.0.0
+            
       - name: Run Docker Bench Security
         run: |
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
