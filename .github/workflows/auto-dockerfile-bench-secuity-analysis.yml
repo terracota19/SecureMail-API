@@ -47,7 +47,7 @@ jobs:
           echo "Fecha de análisis: $(date)" >> $GITHUB_STEP_SUMMARY
           echo "### Resumen del Análisis:" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          cat /reports/docker-bench-security-report.txt | ansi2txt >> $GITHUB_STEP_SUMMARY
+          cat docker-bench-security-report.txt | ansi2txt >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
       - name: Stop and remove container
