@@ -23,7 +23,7 @@ jobs:
 
       - name: Run securemail container (detached)
         run: |
-          docker run -d  \
+          docker run -d --name securemail_container \
             -e HYBRID_ANALYSIS_API_KEY=${{ secrets.HYBRID_ANALYSIS_API_KEY }} \
             -e HYBRID_ANALYSIS_API_URL=${{ secrets.HYBRID_ANALYSIS_API_URL }} \
             -e ML_MODEL_NAME_URI=${{ secrets.ML_MODEL_NAME_URI }} \
@@ -40,7 +40,11 @@ jobs:
             sh -c "./docker-bench-security.sh -i securemail-container" >> $GITHUB_STEP_SUMMARY
             echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
-     
-      - name: Stop and remove container
+      - name: Cleanup
         if: always()
-        run: docker stop securemail-container && docker rm securemail-container
+        run: |
+          docker stop securemail_container || true
+          docker rmi securemail:v1.0.0 || true
+     
+     
+
