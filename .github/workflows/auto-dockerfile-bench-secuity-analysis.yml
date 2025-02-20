@@ -31,19 +31,16 @@ jobs:
 
       - name: Run Docker Bench Security
         run: |
-          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+            echo "## Resultados de Docker Bench Security" >> $GITHUB_STEP_SUMMARY
+            echo "Fecha de análisis: $(date)" >> $GITHUB_STEP_SUMMARY
+            echo "### Resumen del Análisis:" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
             docker/docker-bench-security:latest \
-            sh -c "./docker-bench-security.sh -i securemail-container" | tee docker-bench-security-report.txt
+            sh -c "./docker-bench-security.sh -i securemail-container" >> $GITHUB_STEP_SUMMARY
+            echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
-      - name: Display results in Summary
-        run: |
-          echo "## Resultados de Docker Bench Security" >> $GITHUB_STEP_SUMMARY
-          echo "Fecha de análisis: $(date)" >> $GITHUB_STEP_SUMMARY
-          echo "### Resumen del Análisis:" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          sed 's/\x1B\[[0-9;]*[mK]//g' docker-bench-security-report.txt >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-
+     
       - name: Stop and remove container
         if: always()
         run: docker stop securemail-container && docker rm securemail-container
