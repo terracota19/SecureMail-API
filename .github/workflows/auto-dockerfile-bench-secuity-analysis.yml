@@ -37,7 +37,7 @@ jobs:
             echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
             docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
             docker/docker-bench-security:latest \
-            sh -c "./docker-bench-security.sh -i securemail-container" >> $GITHUB_STEP_SUMMARY
+            sh -c "./docker-bench-security.sh -i securemail-container" | sed 's/\x1b\[[0-9;]*m//g' >> $GITHUB_STEP_SUMMARY
             echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
       - name: Cleanup
