@@ -40,10 +40,6 @@ jobs:
             docker/docker-bench-security:latest \
             sh -c "cd /docker-bench-security && ./docker-bench-security.sh -i securemail-container | tee docker-bench-security-report.txt"
 
-      - name: Install ansi2txt
-        run: |
-          apt get update
-          apt get install -y ansi2txt
           
       - name: Display results in Summary
         run: |
@@ -51,7 +47,7 @@ jobs:
           echo "Fecha de análisis: $(date)" >> $GITHUB_STEP_SUMMARY
           echo "### Resumen del Análisis:" >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          ansi2txt docker-bench-security-report.txt >> $GITHUB_STEP_SUMMARY
+          cat /reports/docker-bench-security-report.txt | ansi2txt >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
       - name: Stop and remove container
