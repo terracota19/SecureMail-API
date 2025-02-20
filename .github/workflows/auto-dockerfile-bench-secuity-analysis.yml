@@ -8,7 +8,6 @@ on:
     branches:
       - main
       - development
-
 jobs:
   docker_bench_security:
     runs-on: ubuntu-latest
@@ -21,12 +20,16 @@ jobs:
       - name: Build securemail image
         run: docker build -t securemail:v1.0.0 .
 
+      - name: List images (for debugging - KEEP THIS)
+        run: docker images
+
       - name: Run securemail container (detached)
-        run: docker run -d --name securemail-container \
-             -e HYBRID_ANALYSIS_API_KEY=${{ secrets.HYBRID_ANALYSIS_API_KEY }} \
-             -e HYBRID_ANALYSIS_API_URL=${{ secrets.HYBRID_ANALYSIS_API_URL }} \
-             -e ML_MODEL_NAME_URI=${{ secrets.ML_MODEL_NAME_URI }} \
-             securemail:v1.0.0
+        run: | # Use the pipe |
+          docker run -d --name securemail-container \
+            -e HYBRID_ANALYSIS_API_KEY=${{ secrets.HYBRID_ANALYSIS_API_KEY }} \
+            -e HYBRID_ANALYSIS_API_URL=${{ secrets.HYBRID_ANALYSIS_API_URL }} \
+            -e ML_MODEL_NAME_URI=${{ secrets.ML_MODEL_NAME_URI }} \
+            securemail:v1.0.0
 
       - name: Clone Docker Bench Security
         run: git clone https://github.com/docker/docker-bench-security.git
@@ -34,21 +37,17 @@ jobs:
       - name: Run Docker Bench Security
         run: |
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-            -v $(pwd)/docker-bench-security:/docker-bench-security \ 
+            -v $(pwd)/docker-bench-security:/docker-bench-security \
             -w /docker-bench-security docker/docker-bench-security:latest \
             sh -c "cd /docker-bench-security && ./docker-bench-security.sh -i securemail-container | tee docker-bench-security-report.txt"
 
       - name: Install ansi2txt
-        run: sudo apt-get install -y ansi2txt
+        run: apt-get update && apt-get install -y ansi2txt # Try without sudo first
 
       - name: Display results in Summary
         run: |
           echo "## Resultados de Docker Bench Security" >> $GITHUB_STEP_SUMMARY
-          echo "Fecha de análisis: $(date)" >> $GITHUB_STEP_SUMMARY
-          echo "### Resumen del Análisis:" >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-          ansi2txt docker-bench-security-report.txt >> $GITHUB_STEP_SUMMARY
-          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          # ... (rest of your summary code)
 
       - name: Stop and remove container
         if: always()
