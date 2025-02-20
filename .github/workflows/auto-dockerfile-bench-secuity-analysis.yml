@@ -23,7 +23,7 @@ jobs:
 
       - name: Run securemail container (detached)
         run: |
-          docker run -d --name securemail_container \
+          docker run -d --security-opt=no-new-privileges --name securemail_container \
             -e HYBRID_ANALYSIS_API_KEY=${{ secrets.HYBRID_ANALYSIS_API_KEY }} \
             -e HYBRID_ANALYSIS_API_URL=${{ secrets.HYBRID_ANALYSIS_API_URL }} \
             -e ML_MODEL_NAME_URI=${{ secrets.ML_MODEL_NAME_URI }} \
