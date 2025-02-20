@@ -23,11 +23,9 @@ jobs:
           python3 -m venv $HOME/venv  
           source $HOME/venv/bin/activate
           pip install -r requirements.txt    
-
-
+          
       - name: Ejecutar Snyk Code (SAST) y Snyk Open Source (SCA)
         run: |
-          set -o pipefail
           source $HOME/venv/bin/activate
           snyk code test --sarif > snyk-code.sarif || true
           snyk test --json > snyk-sca.json || true
