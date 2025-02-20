@@ -21,16 +21,12 @@ jobs:
       - name: Build securemail image
         run: docker build -t securemail:v1.0.0 .
 
-      - name: List images (for debugging - VERY IMPORTANT)
-        run: docker images
-
       - name: Run securemail container (detached)
-        run: |
-          docker run -d --name securemail-container \
-            -e HYBRID_ANALYSIS_API_KEY=${{ secrets.HYBRID_ANALYSIS_API_KEY }} \
-            -e HYBRID_ANALYSIS_API_URL=${{ secrets.HYBRID_ANALYSIS_API_URL }} \
-            -e ML_MODEL_NAME_URI=${{ secrets.ML_MODEL_NAME_URI }} \
-            securemail:v1.0.0
+        run: docker run -d --name securemail-container \
+             -e HYBRID_ANALYSIS_API_KEY=${{ secrets.HYBRID_ANALYSIS_API_KEY }} \
+             -e HYBRID_ANALYSIS_API_URL=${{ secrets.HYBRID_ANALYSIS_API_URL }} \
+             -e ML_MODEL_NAME_URI=${{ secrets.ML_MODEL_NAME_URI }} \
+             securemail:v1.0.0
 
       - name: Clone Docker Bench Security
         run: git clone https://github.com/docker/docker-bench-security.git
@@ -39,9 +35,8 @@ jobs:
         run: |
           docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
             -v $(pwd)/docker-bench-security:/docker-bench-security \
-            -w /docker-bench-security docker/docker-bench-security:latest \
+            docker/docker-bench-security:latest \  # No -w here!
             sh -c "cd /docker-bench-security && ./docker-bench-security.sh -i securemail-container | tee docker-bench-security-report.txt"
-
       - name: Install ansi2txt
         run: apt-get update && apt-get install -y ansi2txt
 
