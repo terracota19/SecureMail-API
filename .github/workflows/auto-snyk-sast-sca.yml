@@ -22,8 +22,10 @@ jobs:
         run: |
           python3 -m venv $HOME/venv  
           source $HOME/venv/bin/activate
-          pip install -r requirements.txt   
+          pip install -r requirements.txt
+          # Ejecuta análisis SAST y guarda el reporte en SARIF
           snyk code test --sarif > snyk-code.sarif || true
+          # Ejecuta análisis SCA y guarda el reporte en JSON
           snyk test --json > snyk-sca.json || true
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_AUTH_TOKEN }}
@@ -40,3 +42,15 @@ jobs:
           path: |
             snyk-code.sarif
             snyk-sca.json
+
+      - name: Mostrar resultados en el Summary
+        run: |
+          echo "## Resultados de Snyk Code (SAST)" >> $GITHUB_STEP_SUMMARY
+          # Extraer el número de hallazgos del reporte SARIF
+          count=$(jq '.runs[0].results | length' snyk-code.sarif)
+          echo "- Total de hallazgos SAST: $count" >> $GITHUB_STEP_SUMMARY
+          
+          echo "\n## Resultados de Snyk Test (SCA)" >> $GITHUB_STEP_SUMMARY
+          # Extraer el número de vulnerabilidades del reporte JSON
+          vuln_count=$(jq '.vulnerabilities | length' snyk-sca.json)
+          echo "- Total de vulnerabilidades SCA: $vuln_count" >> $GITHUB_STEP_SUMMARY
