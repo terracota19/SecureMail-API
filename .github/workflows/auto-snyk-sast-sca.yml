@@ -26,7 +26,6 @@ jobs:
           
       - name: Ejecutar Snyk Code (SAST) y Snyk Open Source (SCA)
         run: |
-          source $HOME/venv/bin/activate
           snyk code test --sarif > snyk-code.sarif || true
           snyk test --json > snyk-sca.json || true
         env:
