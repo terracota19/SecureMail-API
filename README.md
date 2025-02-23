@@ -7,10 +7,13 @@
  |_____/ \___|\___|\__,_|_|  \___|_|  |_|\__,_|_|_|
                                                    
 ```
+
+---
+
+## Project Overview
+SecureMail integrates advanced **ML models** and security best practices to detect phishing emails efficiently. It follows a **secure software development lifecycle (SDLC)**, implementing security measures in all phases: **development, CI/CD, and production**.
+
  
-SecureMail is a  REST API that leverages **Machine Learning (ML)** to detect phishing attempts in emails. By analyzing email content and metadata, SecureMail provides real-time security assessments, helping organizations protect against phishing attacks.
-
-
 ---
 
 ## Table of Contents
@@ -28,13 +31,6 @@ SecureMail is a  REST API that leverages **Machine Learning (ML)** to detect phi
 ## Available Languages
 - [Español](README.es.md)
 - [Português](README.pt.md)
-
----
-
-## Project Overview
-SecureMail integrates advanced **ML models** and security best practices to detect phishing emails efficiently. It follows a **secure software development lifecycle (SDLC)**, implementing security measures in all phases: **development, CI/CD, and production**.
-
----
 
 ## Development Phase
 
