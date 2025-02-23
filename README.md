@@ -1,6 +1,8 @@
-"""
-/ | ___ ___ _ _ _ __ | / | __ () | _ \ / _ / | | | | '/ _ \ |/| |/ ` | | | __) | / (| || | | | __/ | | | (| | | | |/ _|_|_,|| ___|| ||_,||_|
-"""
+ ____                           __  __       _ _ 
+/ ___|  ___  ___ _   _ _ __ ___|  \/  | __ _(_) |                                                                             
+\___ \ / _ \/ __| | | | '__/ _ \ |\/| |/ _` | | |                                                                             
+ ___) |  __/ (__| |_| | | |  __/ |  | | (_| | | |                                                                             
+|____/ \___|\___|\__,_|_|  \___|_|  |_|\__,_|_|_|
 
 
 SecureMail is a robust REST API that leverages **Machine Learning (ML)** to detect phishing attempts in emails. By analyzing email content and metadata, SecureMail provides real-time security assessments, helping organizations protect against phishing attacks.
