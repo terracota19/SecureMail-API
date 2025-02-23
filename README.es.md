@@ -8,8 +8,6 @@
                                                    
 ```
 
----
-
 ## Descripción del Proyecto
 SecureMail integra avanzados **modelos de ML** y mejores prácticas de seguridad para detectar correos electrónicos de phishing de manera eficiente. Sigue un **ciclo de vida de desarrollo de software seguro (SDLC)**, implementando medidas de seguridad en todas las fases: **desarrollo, CI/CD y producción**.
 
