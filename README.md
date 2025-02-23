@@ -1,3 +1,6 @@
+# **pyfiglet**
+
+```
                         _|_|  _|            _|              _|
 _|_|_|    _|    _|    _|            _|_|_|  _|    _|_|    _|_|_|_|
 _|    _|  _|    _|  _|_|_|_|  _|  _|    _|  _|  _|_|_|_|    _|
@@ -5,7 +8,7 @@ _|    _|  _|    _|    _|      _|  _|    _|  _|  _|          _|
 _|_|_|      _|_|_|    _|      _|    _|_|_|  _|    _|_|_|      _|_|
 _|              _|                      _|
 _|          _|_|                    _|_|
-
+```
  
 SecureMail is a robust REST API that leverages **Machine Learning (ML)** to detect phishing attempts in emails. By analyzing email content and metadata, SecureMail provides real-time security assessments, helping organizations protect against phishing attacks.
 
