@@ -49,7 +49,7 @@ SecureMail integra **modelos de ML** avançados e melhores práticas de seguran�
 ### Ferramentas de Segurança e Testes:
 - **Pylint**: Aplica melhores práticas de segurança e qualidade de código.
 - **Pytest**: Garante precisão na resposta da API através de testes rigorosos.
-- **Snyk**: Realiza análise de segurança estática (SAST) para detectar vulnerabilidades.
+- **Snyk**: Realiza análise de segurança estática (SAST + SCA) para detectar vulnerabilidades.
 - **Docker Bench Security**: Avalia as configurações de segurança de contêineres Docker.
 
 ---
