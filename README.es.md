@@ -1,67 +1,90 @@
-# SecureMail: API para la Detección de Phishing con Machine Learning
-
-**SecureMail** es una API que utiliza técnicas de **Machine Learning (ML)** para evaluar si un correo electrónico es un intento de **phishing**. Esta API realiza análisis de seguridad y proporciona predicciones sobre correos electrónicos sospechosos.
+```
+   _____                          __  __       _ _ 
+  / ____|                        |  \/  |     (_) |
+ | (___   ___  ___ _   _ _ __ ___| \  / | __ _ _| |
+  \___ \ / _ \/ __| | | | '__/ _ \ |\/| |/ _` | | |
+  ____) |  __/ (__| |_| | | |  __/ |  | | (_| | | |
+ |_____/ \___|\___|\__,_|_|  \___|_|  |_|\__,_|_|_|
+                                                   
+```
 
 ---
 
-## Índice
+## Descripción del Proyecto
+SecureMail integra avanzados **modelos de ML** y mejores prácticas de seguridad para detectar correos electrónicos de phishing de manera eficiente. Sigue un **ciclo de vida de desarrollo de software seguro (SDLC)**, implementando medidas de seguridad en todas las fases: **desarrollo, CI/CD y producción**.
+
+---
+
+## Tabla de Contenidos
+- [Idiomas Disponibles](#idiomas-disponibles)
+- [Descripción del Proyecto](#descripción-del-proyecto)
 - [Fase de Desarrollo](#fase-de-desarrollo)
-- [Fase de CI/CD](#fase-de-cicd)
+- [Fase CI/CD](#fase-cicd)
 - [Fase de Producción](#fase-de-producción)
 - [Diseño y Arquitectura](#diseño-y-arquitectura)
-- [Trabajo Futuro](#trabajo-futuro)
+- [Mejoras Futuras](#mejoras-futuras)
+- [Licencia](#licencia)
 
 ---
+
+## Idiomas Disponibles
+- [Español](README.es.md)
+- [Português](README.pt.md)
 
 ## Fase de Desarrollo
 
-- **Secure Coding**: Aplicamos principios de **código seguro**.
-   - Sanetizacion de datos entrantes.
-        - Externas (Usuario) {Pydantic}. Generamos error si la API recibe datos malformados (fuzzing) o vacios.
-        - internas (llamadas a APIs de tercero (Hybrid Analysis))
-   - Uso de variables de entornos para secretos de la API.
-        - Para ello utilizamos Python-dotenv. 
+### Prácticas de Codificación Segura:
+- **Sanitización de Datos**:
+  - Entradas externas (datos proporcionados por el usuario) validadas utilizando **Pydantic**.
+  - Entradas internas (respuestas de API de terceros) revisadas en busca de anomalías.
+- **Gestión de Variables de Entorno**:
+  - Información sensible (por ejemplo, claves de API) gestionada usando **Python-dotenv**.
+- **Estrategias de Mitigación de Amenazas**:
+  - Implementación de las directrices de codificación segura recomendadas por OWASP.
 
 ---
 
-## Fase de CI/CD
+## Fase CI/CD
 
-Durante la integración continua y despliegue continuo, realizamos las siguientes tareas de seguridad y pruebas:
-
-### Herramientas:
-- **Pylint**: Revisión del código para asegurar que cumple con las mejores prácticas.
-- **Pytest**: Testeo de las respuestas de la API.
-- **Snyk**: Análisis de seguridad estático (SAST).
-- **Docker Bench Security**: Revisión de la seguridad en los contenedores Docker.
+### Herramientas de Seguridad y Pruebas:
+- **Pylint**: Garantiza la calidad del código y las mejores prácticas de seguridad.
+- **Pytest**: Asegura la precisión de la respuesta de la API mediante rigurosas pruebas.
+- **Snyk**: Realiza análisis de seguridad estática (SAST) para detectar vulnerabilidades.
+- **Docker Bench Security**: Evalúa la configuración de seguridad de los contenedores Docker.
 
 ---
 
 ## Fase de Producción
 
-En producción, seguimos con el monitoreo y aseguramos la aplicación:
-
-- **Snyk**: Realizamos análisis de seguridad de dependencias en producción.
-- **Docker Bench Security**: Evaluamos la configuración de seguridad en los contenedores de producción.
-- **Render (PaaS)**: Despliegue continuo de la API mediante Docker.
+### Seguridad y Monitoreo:
+- **Escaneo Continuo de Seguridad**:
+  - **Snyk** para detectar vulnerabilidades en las dependencias en producción.
+  - **Docker Bench Security** para evaluaciones de seguridad de contenedores en tiempo de ejecución.
+- **Plataforma de Despliegue**:
+  - Alojado en **Render (PaaS)** utilizando despliegue basado en Docker para fiabilidad.
 
 ---
 
 ## Diseño y Arquitectura
 
-- **Arquitectura de Datos**: Definimos el flujo de datos dentro de la aplición.
-   ![dataflow](https://github.com/user-attachments/assets/031fe97e-8b09-4a9d-b254-2b63db6487cb)
-
-
----
-
-## Trabajo Futuro
-
-- Configuración de un **ASPM** utilizando **ASOC**.
-- **SLSA**: Implementación de **Supply Chain Levels for Software Artifacts**.
-- **Modelado de Amenazas**: **OWASP Threat Dragon** para realizar un análisis de amenazas.
+- **Arquitectura del Flujo de Datos**:
+  - SecureMail sigue una **tubería de procesamiento de datos estructurada** para analizar los correos electrónicos.
+  - A continuación se muestra una visión general del flujo de datos:
+  
+    ![dataflow](https://github.com/user-attachments/assets/031fe97e-8b09-4a9d-b254-2b63db6487cb)
 
 ---
 
-### Licencia
+## Mejoras Futuras
 
-Distribuido bajo la licencia GPL-3.0 . Ver el archivo [LICENSE](./LICENSE) para más detalles.
+- **Gestión de Postura de Seguridad de la Aplicación (ASPM)**:
+  - Integración de **Orquestación y Correlación de Seguridad de Aplicaciones (ASOC)**.
+- **Seguridad de la Cadena de Suministro de Software**:
+  - Implementación de **SLSA (Niveles de la Cadena de Suministro para Artefactos de Software)**.
+- **Modelado de Amenazas Avanzado**:
+  - Uso de **OWASP Threat Dragon** para un análisis estructurado de amenazas.
+
+---
+
+## Licencia
+Distribuido bajo la licencia **GPL-3.0**. Consulta el archivo [LICENSE](./LICENSE) para más detalles.
