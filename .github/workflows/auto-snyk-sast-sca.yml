@@ -23,9 +23,8 @@ jobs:
           python3 -m venv $HOME/venv  
           source $HOME/venv/bin/activate
           pip install -r requirements.txt   
-          # Ejecuta análisis SAST y genera reporte en SARIF
           snyk code test --sarif > snyk-code.sarif || true
-          snyk monitor || true
+          snyk test --json > snyk-sca.json || true
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_AUTH_TOKEN }}
  
@@ -34,8 +33,9 @@ jobs:
         with:
           sarif_file: snyk-code.sarif
 
-      - name: Subir reporte SAST como artifact (opcional)
+      - name: Subir resultados de Snyk como artifact
         uses: actions/upload-artifact@v4
         with:
-          name: snyk-sast-report
-          path: snyk-code.sarif
+          name: snyk-reports
+          path: 
+            snyk-sca.json
