@@ -74,15 +74,16 @@ SecureMail integrates advanced **ML models** including **NLP techniques** and se
   - 
        ![dataflow](./images/dataflow.png)
 
-
+SLSA Code Signing
+   - **Software Supply Chain Security**:
+     - Implementing **SLSA (Supply Chain Levels for Software Artifacts)**.
+     - Uses GnuPG to enhance Code Signing security.
 ---
 
 ## Future Enhancements
 
 - **Application Security Posture Management (ASPM)**:
   - Integrating **Application Security Orchestration and Correlation (ASOC)**.
-- **Software Supply Chain Security**:
-  - Implementing **SLSA (Supply Chain Levels for Software Artifacts)**.
 - **Advanced Threat Modeling**:
   - Using **OWASP Threat Dragon** for structured threat analysis.
 
