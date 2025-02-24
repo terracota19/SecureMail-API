@@ -13,7 +13,8 @@
 ## Project Overview
 SecureMail integrates advanced **ML models** including **NLP techniques** and security best practices to detect phishing emails efficiently. It follows a **secure software development lifecycle (SDLC)**, implementing security measures in all phases: **development, CI/CD, and production**.
 
- 
+ > [!Note]
+ > Esto es una nota bastante potente 
 ---
 
 ## Table of Contents
