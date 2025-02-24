@@ -8,13 +8,9 @@
                                                    
 ```
 
----
-
 ## Project Overview
 SecureMail integrates advanced **ML models** including **NLP techniques** and security best practices to detect phishing emails efficiently. It follows a **secure software development lifecycle (SDLC)**, implementing security measures in all phases: **development, CI/CD, and production**.
 
- > [!Note]
- > Esto es una nota bastante potente 
 ---
 
 ## Table of Contents
@@ -33,6 +29,8 @@ SecureMail integrates advanced **ML models** including **NLP techniques** and se
 - [Español](README.es.md)
 - [Português](README.pt.md)
 
+---
+
 ## Development Phase
 
 ### Secure Coding Practices:
@@ -43,7 +41,7 @@ SecureMail integrates advanced **ML models** including **NLP techniques** and se
   - Sensitive information (e.g., API keys) managed using **Python-dotenv**.
 - **Threat Mitigation Strategies**:
   - Implementing OWASP-recommended secure coding guidelines.
-  
+
 ---
 
 ## CI/CD Phase
@@ -53,6 +51,8 @@ SecureMail integrates advanced **ML models** including **NLP techniques** and se
 - **Pytest**: Ensures API response accuracy through rigorous testing.
 - **Snyk**: Conducts static security analysis (SAST + SCA) to detect vulnerabilities.
 - **Docker Bench Security**: Assesses Docker container security configurations.
+
+
 
 ---
 
@@ -64,21 +64,28 @@ SecureMail integrates advanced **ML models** including **NLP techniques** and se
   - **Docker Bench Security** for runtime container security evaluations.
 - **Deployment Platform**:
   - Hosted on **Render (PaaS)** using Docker-based deployment for reliability.
-  
+
+> [!IMPORTANT]  
+> Always ensure continuous monitoring to catch any new vulnerabilities as they arise in the production environment.
+
 ---
 
 ## Design and Architecture
 
-- **Data Flow Architecture**:
-  - SecureMail follows a **structured data processing pipeline** to analyze emails.
-  - Below is an overview of the data flow:
-  - 
-       ![dataflow](./images/dataflow.png)
+### Data Flow Architecture:
+SecureMail follows a **structured data processing pipeline** to analyze emails. Below is an overview of the data flow:
 
-SLSA Code Signing
-   - **Software Supply Chain Security**:
-     - Implementing **SLSA (Supply Chain Levels for Software Artifacts)**.
-     - Uses GnuPG to enhance Code Signing security.
+![dataflow](./images/dataflow.png)
+
+### SLSA Code Signing
+> [!WARNING] 
+> If you do not properly secure your code signing process, you risk introducing malicious code into your software.
+
+- **Software Supply Chain Security**:
+  - Implementing **SLSA (Supply Chain Levels for Software Artifacts)**.
+  - Uses GnuPG to enhance Code Signing security.
+
+
 ---
 
 ## Future Enhancements
@@ -87,6 +94,7 @@ SLSA Code Signing
   - Integrating **Application Security Orchestration and Correlation (ASOC)**.
 - **Advanced Threat Modeling**:
   - Using **OWASP Threat Dragon** for structured threat analysis.
+
 
 ---
 
