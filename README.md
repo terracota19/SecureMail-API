@@ -81,8 +81,7 @@ SecureMail follows a **structured data processing pipeline** to analyze emails. 
 > [!WARNING] 
 > If you do not properly secure your code signing process, you risk introducing malicious code into your software.
 
-- **Software Supply Chain Security**:
-  - Implementing **SLSA (Supply Chain Levels for Software Artifacts)**.
+- **Code Signing with GPG key**:
   - Uses GnuPG to enhance Code Signing security.
 
 
