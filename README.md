@@ -11,7 +11,7 @@
 ---
 
 ## Project Overview
-SecureMail integrates advanced **ML models** and security best practices to detect phishing emails efficiently. It follows a **secure software development lifecycle (SDLC)**, implementing security measures in all phases: **development, CI/CD, and production**.
+SecureMail integrates advanced **ML models** including **NLP techniques** and security best practices to detect phishing emails efficiently. It follows a **secure software development lifecycle (SDLC)**, implementing security measures in all phases: **development, CI/CD, and production**.
 
  
 ---
@@ -71,8 +71,9 @@ SecureMail integrates advanced **ML models** and security best practices to dete
 - **Data Flow Architecture**:
   - SecureMail follows a **structured data processing pipeline** to analyze emails.
   - Below is an overview of the data flow:
-  
-    ![dataflow](https://github.com/user-attachments/assets/031fe97e-8b09-4a9d-b254-2b63db6487cb)
+  - 
+       ![dataflow](./images/dataflow.png)
+
 
 ---
 
