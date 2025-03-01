@@ -9,7 +9,6 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
 COPY requirements.txt .
 RUN pip install -r requirements.txt
-RUN pip install libmagic
 COPY app.py .
 COPY XGBoost.pkl .
 RUN mkdir -p /secure.mail/cache && chown -R appuser:appgroup /secure.mail
