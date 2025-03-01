@@ -12,3 +12,4 @@ transformers
 uvicorn
 xgboost
 pydantic[email]
+python-magic-bin

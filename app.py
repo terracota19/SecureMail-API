@@ -1,9 +1,12 @@
 import os
+import re
 import base64
+import magic
 import aiohttp
 import joblib
 import numpy as np
 import torch
+import binascii
 import pandas as pd
 from dotenv import load_dotenv
 from urllib.parse import urlparse
@@ -46,7 +49,6 @@ class EmailData(BaseModel):
     Date: str
     Concatenated_URLs: Optional[str] = "No Data"
     Attachments: Optional[List[dict]] 
-
 
 
 def process_urls(urls):
@@ -122,8 +124,21 @@ def generate_distilbert_embeddings(texts, tokenizer, model, max_length=512, batc
             torch.cuda.empty_cache()
     return np.vstack(embeddings)
 
+def validate_base64_file(attachment: str) -> bool:
+    try:
+        file_data = base64.b64decode(attachment, validate=True)
+        mime_type = magic.from_buffer(file_data, mime=True)
+        allowed_mime_types = {"application/pdf", "image/png", "image/jpeg", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
+        return mime_type in allowed_mime_types
+    except (binascii.Error, ValueError):
+        return False
+    
 async def analyze_attachment(attachment: str):
     try:
+        #validate input str: attachment
+        if not validate_base64_file(attachment) and isinstance(attachment, str):
+            return {"verdict": "rejected", "detail": "Archivo no permitido o inválido"}
+        
         file_data = base64.b64decode(attachment)
 
         async with aiohttp.ClientSession() as session:
@@ -139,14 +154,16 @@ async def analyze_attachment(attachment: str):
                 if response.status == 201:
                     response_json = await response.json()
                     sha256 = response_json.get("sha256")
-                    if sha256:
-                        
+
+                    #Check whether given sha256 string is a SHA256 and a str
+                    if sha256 and isinstance(sha256, str) and re.fullmatch(r"^[a-fA-F0-9]{64}$", sha256) is not None:
                         summary_url = f"{HYBRID_ANALYSIS_API_URL}/report/{sha256}:160/summary"
                         async with session.get(
                             summary_url,
                             headers={"accept": "application/json", "api-key": HYBRID_ANALYSIS_API_KEY}
                         ) as summary_response:
-                            if summary_response.status == 200:
+                            #Check if summary_response of API is an Integer
+                            if isinstance(summary_response, int) and summary_response.status == 200:
                                 return await summary_response.json()
                             else:
                                 return {
@@ -167,20 +184,14 @@ async def analyze_attachment(attachment: str):
 @limiter.limit("5 per minute")
 async def predict_emails(email: EmailData, request: Request):
     try:
-        prediction = None
         
         additional_features = preprocess_additional_features(pd.DataFrame([email.dict()]))
-
         urls_features = process_urls(email.Concatenated_URLs)
-
         text_data = [" ".join([email.Subject, email.Body])]
         text_embeddings = generate_distilbert_embeddings(text_data, tokenizer, model_bert)
-
         X_combined = np.hstack([text_embeddings, additional_features, urls_features.values.reshape(1, -1)])
-
         pred_prob = model.predict_proba(X_combined)[0]
         pred_label = model.predict(X_combined)[0]
-
         attachment_results = []
         malicious_attachments = False  
 
