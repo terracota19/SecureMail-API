@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: windows-latest 
+    runs-on: ubuntu-latest
 
     steps:
     - name: Checkout code
@@ -25,35 +25,36 @@ jobs:
     - name: Install dependencies
       run: |
         pip install pylint pytest httpx libmagic
-        if (Test-Path requirements.txt) { pip install -r requirements.txt }
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
     - name: Run pylint on app.py
       run: |
-        pylint app.py | Out-File -FilePath pylint_report.txt -Force
-        Get-Content pylint_report.txt | Out-String | Write-Host
+        pylint app.py | tee pylint_report.txt || true
 
     - name: Show pylint results in job summary
       if: always()
       run: |
         echo "## 📝 Pylint Report (app.py)" >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
-        Get-Content pylint_report.txt | Out-String | Write-Host >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
+        echo '
+' >> $GITHUB_STEP_SUMMARY
+        cat pylint_report.txt >> $GITHUB_STEP_SUMMARY
+        echo '
+' >> $GITHUB_STEP_SUMMARY
 
     - name: Run pytest with environment variables
       env:
         ML_MODEL_NAME_URI: ${{ secrets.ML_MODEL_NAME_URI }}
-        HYBRID_ANALYSIS_API_KEY: ${{ secrets.HYBRID_ANALYSIS_API_KEY }}
-        HYBRID_ANALYSIS_API_URL: ${{ secrets.HYBRID_ANALYSIS_API_URL }}
+        HYBRID_ANALYSIS_API_KEY : ${{ secrets.HYBRID_ANALYSIS_API_KEY }}
+        HYBRID_ANALYSIS_API_URL : ${{ secrets.HYBRID_ANALYSIS_API_URL }}
       run: |
-        pytest test/*.py --disable-warnings | Out-File -FilePath pytest_report.txt -Force
-        # Para ver los resultados de pytest directamente en el flujo de trabajo
-        Get-Content pytest_report.txt | Out-String | Write-Host
+        pytest test/*.py --disable-warnings | tee pytest_report.txt || true
 
     - name: Show pytest results in job summary
       if: always()
       run: |
         echo "## 📝 Pytest Execution Report" >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
-        Get-Content pytest_report.txt | Out-String | Write-Host >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
+        echo '
+' >> $GITHUB_STEP_SUMMARY
+        cat pytest_report.txt >> $GITHUB_STEP_SUMMARY
+        echo '
+' >> $GITHUB_STEP_SUMMARY
