@@ -1,7 +1,7 @@
 import os
 import re
 import base64
-import magic
+import filetype
 import aiohttp
 import joblib
 import numpy as np
@@ -127,7 +127,10 @@ def generate_distilbert_embeddings(texts, tokenizer, model, max_length=512, batc
 def validate_base64_file(attachment: str) -> bool:
     try:
         file_data = base64.b64decode(attachment, validate=True)
-        mime_type = magic.from_buffer(file_data, mime=True)
+        kind = filetype.guess(file_data)
+        if kind is None:
+            return False        
+        mime_type = kind.mime
         allowed_mime_types = {"application/pdf", "image/png", "image/jpeg", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
         return mime_type in allowed_mime_types
     except (binascii.Error, ValueError):
