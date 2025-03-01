@@ -131,6 +131,7 @@ def validate_base64_file(attachment: str) -> bool:
         if kind is None:
             return False        
         mime_type = kind.mime
+
         allowed_mime_types = {"application/pdf", "image/png", "image/jpeg", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
         return mime_type in allowed_mime_types
     except (binascii.Error, ValueError):

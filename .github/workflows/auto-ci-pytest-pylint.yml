@@ -24,7 +24,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        pip install pylint pytest httpx
+        pip install pylint pytest httpx libmagic
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
     - name: Run pylint on app.py
@@ -35,9 +35,11 @@ jobs:
       if: always()
       run: |
         echo "## 📝 Pylint Report (app.py)" >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
+        echo '
+' >> $GITHUB_STEP_SUMMARY
         cat pylint_report.txt >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
+        echo '
+' >> $GITHUB_STEP_SUMMARY
 
     - name: Run pytest with environment variables
       env:
@@ -51,6 +53,8 @@ jobs:
       if: always()
       run: |
         echo "## 📝 Pytest Execution Report" >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
+        echo '
+' >> $GITHUB_STEP_SUMMARY
         cat pytest_report.txt >> $GITHUB_STEP_SUMMARY
-        echo '```' >> $GITHUB_STEP_SUMMARY
+        echo '
+' >> $GITHUB_STEP_SUMMARY

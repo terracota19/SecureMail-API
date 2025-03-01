@@ -22,16 +22,12 @@ jobs:
         run: |
           python3 -m venv $HOME/venv  
           source $HOME/venv/bin/activate
-          pip install -r requirements.txt    
-          
-      - name: Ejecutar Snyk Code (SAST) y Snyk Open Source (SCA)
-        run: |
-          source $HOME/venv/bin/activate
+          pip install -r requirements.txt   
           snyk code test --sarif > snyk-code.sarif || true
           snyk test --json > snyk-sca.json || true
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_AUTH_TOKEN }}
-
+ 
       - name: Subir resultados de Snyk Code (SAST) a GitHub Security
         uses: github/codeql-action/upload-sarif@v3
         with:
@@ -41,6 +37,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: snyk-reports
-          path: |
-            snyk-code.sarif
+          path: 
             snyk-sca.json
