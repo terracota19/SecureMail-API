@@ -74,8 +74,8 @@ SecureMail integrates advanced **ML models** including **NLP techniques** and se
 
 ### Data Flow Architecture:
 SecureMail follows a **structured data processing pipeline** to analyze emails. Below is an overview of the data flow:
-
 ![dataflow](./images/dataflow.png)
+
 
 ### SLSA Code Signing
 > [!WARNING] 
