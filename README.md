@@ -89,8 +89,8 @@ SecureMail follows a **structured data processing pipeline** to analyze emails. 
 
 ## Future Enhancements
 
-- **Application Security Posture Management (ASPM)**:
-  - Integrating **Application Security Orchestration and Correlation (ASOC)**.
+
+- **Integrating Application Security Orchestration and Correlation (ASOC)**.
 - **Advanced Threat Modeling**:
   - Using **OWASP Threat Dragon** for structured threat analysis.
 
