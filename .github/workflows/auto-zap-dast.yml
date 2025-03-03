@@ -4,21 +4,25 @@ on:
   push:
     branches:
       - main
-      - development 
+      - development
+      - preproduction
 
 jobs:
   security-test:
     runs-on: ubuntu-latest
 
     steps:
-      - name:  Checkout del código  
+      - name: Checkout del código  
         uses: actions/checkout@v4  
 
-      - name:  Crear archivo .env desde Secrets
+      - name: Crear archivo .env desde Secrets
         run: |
           echo "HYBRID_ANALYSIS_API_KEY=${{ secrets.HYBRID_ANALYSIS_API_KEY }}" >> .env
           echo "HYBRID_ANALYSIS_API_URL=${{ secrets.HYBRID_ANALYSIS_API_URL }}" >> .env
           echo "ML_MODEL_NAME_URI=${{ secrets.ML_MODEL_NAME_URI }}" >> .env
+
+      - name: Descargar OWASP ZAP  
+        run: docker pull ghcr.io/zaproxy/zap-stable  # O usa 'owasp/zap2docker-stable' si prefieres Docker Hub
 
       - name: 🏗️ Hacer ejecutable el script
         run: chmod +x zap_scan.sh  
@@ -26,7 +30,7 @@ jobs:
       - name: 🚀 Iniciar escaneo de seguridad con OWASP ZAP
         run: ./zap_scan.sh  
 
-      - name:  Subir Reporte OWASP ZAP
+      - name: Subir Reporte OWASP ZAP
         uses: actions/upload-artifact@v4  
         with:
           name: ZAP-Report
