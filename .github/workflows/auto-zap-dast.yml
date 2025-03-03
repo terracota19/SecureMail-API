@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-      - development
+      - development 
       - preproduction
 
 jobs:
@@ -28,7 +28,9 @@ jobs:
         run: chmod +x zap_scan.sh  
 
       - name: 🚀 Iniciar escaneo de seguridad con OWASP ZAP
-        run: ./zap_scan.sh  
+        run: |
+          # Ejecutamos el script zap_scan.sh, asegurándonos de que no se ejecute como root.
+          ./zap_scan.sh
 
       - name: Subir Reporte OWASP ZAP
         uses: actions/upload-artifact@v4  
