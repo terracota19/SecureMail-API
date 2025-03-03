@@ -13,7 +13,7 @@ echo "📦 Construyendo la imagen de la API..."
 docker build -t securemail:v1.0.0 .
 
 echo "🚀 Iniciando API en Docker..."
-docker run -d --security-opt=no-new-privileges --name securemail_container \
+docker run -d --name securemail_container \
   -e HYBRID_ANALYSIS_API_KEY="$HYBRID_ANALYSIS_API_KEY" \
   -e HYBRID_ANALYSIS_API_URL="$HYBRID_ANALYSIS_API_URL" \
   -e ML_MODEL_NAME_URI="$ML_MODEL_NAME_URI" \
