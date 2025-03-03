@@ -1,0 +1,42 @@
+name: Security Scan with OWASP ZAP
+
+on:
+  push:
+    branches:
+      - main
+      - development 
+
+jobs:
+  security-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name:  Checkout del código  
+        uses: actions/checkout@v3  
+
+      - name:  Crear archivo .env desde Secrets
+        run: |
+          echo "HYBRID_ANALYSIS_API_KEY=${{ secrets.HYBRID_ANALYSIS_API_KEY }}" >> .env
+          echo "HYBRID_ANALYSIS_API_URL=${{ secrets.HYBRID_ANALYSIS_API_URL }}" >> .env
+          echo "ML_MODEL_NAME_URI=${{ secrets.ML_MODEL_NAME_URI }}" >> .env
+
+      - name: 🏗️ Hacer ejecutable el script
+        run: chmod +x zap_scan.sh  
+
+      - name: 🚀 Iniciar escaneo de seguridad con OWASP ZAP
+        run: ./zap_scan.sh  
+
+      - name:  Subir Reporte OWASP ZAP
+        uses: actions/upload-artifact@v3  
+        with:
+          name: ZAP-Report
+          path: zap-report.html
+
+      - name: 🚨 Revisar vulnerabilidades y fallar el build si hay hallazgos graves
+        run: |
+          if grep -q "High Risk Alerts: [1-9]" zap-report.html; then
+            echo "❌ Se encontraron vulnerabilidades graves"
+            exit 1
+          else
+            echo "✅ No se encontraron vulnerabilidades críticas"
+          fi
