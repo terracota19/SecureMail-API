@@ -27,7 +27,7 @@ jobs:
         run: ./zap_scan.sh  
 
       - name:  Subir Reporte OWASP ZAP
-        uses: actions/upload-artifact@v3  
+        uses: actions/upload-artifact@v4  
         with:
           name: ZAP-Report
           path: zap-report.html
