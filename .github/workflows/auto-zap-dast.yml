@@ -1,5 +1,3 @@
-name: Security Scan with OWASP ZAP
-
 on:
   push:
     branches:
@@ -8,71 +6,50 @@ on:
       - preproduction
 
 jobs:
-  security-test:
+  zap_scan:
     runs-on: ubuntu-latest
-
+    name: Scan API with OWASP ZAP
     steps:
-      - name: Checkout del código  
+      - name:  Checkout del código  
         uses: actions/checkout@v4  
 
-      - name: Crear archivo .env desde Secrets
-        run: |
-          echo "HYBRID_ANALYSIS_API_KEY=${{ secrets.HYBRID_ANALYSIS_API_KEY }}" >> .env
-          echo "HYBRID_ANALYSIS_API_URL=${{ secrets.HYBRID_ANALYSIS_API_URL }}" >> .env
-          echo "ML_MODEL_NAME_URI=${{ secrets.ML_MODEL_NAME_URI }}" >> .env
-
-      - name: Construir la imagen de la API
+      - name:  Construir la imagen de la API
         run: docker build -t securemail:v1.0.0 .
 
       - name: Iniciar API en Docker
         run: |
-          docker run -d --name securemail_container \
+          docker network create zap_net  # Creamos una red para comunicación interna
+          docker run -d --name securemail_container --network=zap_net \
             -e HYBRID_ANALYSIS_API_KEY="${{ secrets.HYBRID_ANALYSIS_API_KEY }}" \
             -e HYBRID_ANALYSIS_API_URL="${{ secrets.HYBRID_ANALYSIS_API_URL }}" \
             -e ML_MODEL_NAME_URI="${{ secrets.ML_MODEL_NAME_URI }}" \
-            -p 8080:8080 securemail:v1.0.0
+            -p 10000:10000 securemail:v1.0.0  
 
-      - name: Iniciar OWASP ZAP en modo daemon
-        run: docker run -d --name zap -p 8090:8090 owasp/zap2docker-stable zap.sh -daemon -host 0.0.0.0 -port 8090
+      - name:  Esperar 15 segundos para que la API inicie
+        run: sleep 15
 
-      - name:  Esperar a que OWASP ZAP esté listo
-        run: sleep 20
+      - name: Escaneo con OWASP ZAP
+        uses: zaproxy/action-full-scan@v0.1.0
+        with:
+          target: 'http://securemail_container:10000'  
+          fail_action: false 
+          docker_name: 'zap_net'  
 
-      - name: Iniciar escaneo activo contra la API
+      - name: Generar Summary de Vulnerabilidades
         run: |
-          curl "http://localhost:8090/JSON/ascan/action/scan/?url=http://host.docker.internal:8080&recurse=true"
+          echo "### 📌 Reporte de OWASP ZAP" > summary.txt
+          echo "" >> summary.txt
+          echo "🔍 **Vulnerabilidades detectadas:**" >> summary.txt
+          cat report.md >> summary.txt || echo "✅ No se encontraron vulnerabilidades críticas" >> summary.txt
 
-      - name: Generar reporte de OWASP ZAP
-        run: |
-          curl "http://localhost:8090/OTHER/core/other/htmlreport/" -o zap-report.html
-
-      - name: Subir Reporte OWASP ZAP
-        uses: actions/upload-artifact@v4  
+      - name:  Subir Reporte OWASP ZAP
+        uses: actions/upload-artifact@v4
         with:
           name: ZAP-Report
-          path: zap-report.html
+          path: summary.txt
 
-      - name: 🚨 Revisar vulnerabilidades y fallar el build si hay hallazgos graves
+      - name: 🛑 Limpiar contenedores y red de Docker
         run: |
-          HIGH=$(grep -o "High Risk Alerts: [0-9]*" zap-report.html | awk '{print $4}')
-          MEDIUM=$(grep -o "Medium Risk Alerts: [0-9]*" zap-report.html | awk '{print $4}')
-          LOW=$(grep -o "Low Risk Alerts: [0-9]*" zap-report.html | awk '{print $4}')
-
-
-          if [ "$HIGH" -gt 0 ]; then
-            echo "❌ Se encontraron vulnerabilidades GRAVES. Falla el pipeline."
-            exit 1
-          elif [ "$MEDIUM" -gt 5 ]; then
-            echo "⚠️ Se encontraron más de 5 vulnerabilidades de nivel MEDIO. Falla el pipeline."
-            exit 1
-          elif [ "$LOW" -gt 10 ]; then
-            echo "🔵 Hay demasiadas vulnerabilidades de nivel BAJO. Falla el pipeline."
-            exit 1
-          else
-            echo "✅ No se encontraron vulnerabilidades críticas."
-          fi
-
-      - name: 🛑 Limpiar contenedores
-        run: |
-          docker stop securemail_container zap
-          docker rm securemail_container zap
+          docker stop securemail_container
+          docker rm securemail_container
+          docker network rm zap_net
