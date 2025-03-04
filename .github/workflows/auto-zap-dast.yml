@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-      - development 
+      - development
       - preproduction
 
 jobs:
@@ -21,16 +21,30 @@ jobs:
           echo "HYBRID_ANALYSIS_API_URL=${{ secrets.HYBRID_ANALYSIS_API_URL }}" >> .env
           echo "ML_MODEL_NAME_URI=${{ secrets.ML_MODEL_NAME_URI }}" >> .env
 
-      - name: Descargar OWASP ZAP  
-        run: docker pull owasp/zap2docker-stable
+      - name: Construir la imagen de la API
+        run: docker build -t securemail:v1.0.0 .
 
-      - name: 🏗️ Hacer ejecutable el script
-        run: chmod +x zap_scan.sh  
-
-      - name: 🚀 Iniciar escaneo de seguridad con OWASP ZAP
+      - name: Iniciar API en Docker
         run: |
-          # Ejecutamos el script zap_scan.sh, asegurándonos de que no se ejecute como root.
-          ./zap_scan.sh
+          docker run -d --name securemail_container \
+            -e HYBRID_ANALYSIS_API_KEY="${{ secrets.HYBRID_ANALYSIS_API_KEY }}" \
+            -e HYBRID_ANALYSIS_API_URL="${{ secrets.HYBRID_ANALYSIS_API_URL }}" \
+            -e ML_MODEL_NAME_URI="${{ secrets.ML_MODEL_NAME_URI }}" \
+            -p 8080:8080 securemail:v1.0.0
+
+      - name: Iniciar OWASP ZAP en modo daemon
+        run: docker run -d --name zap -p 8090:8090 owasp/zap2docker-stable zap.sh -daemon -host 0.0.0.0 -port 8090
+
+      - name:  Esperar a que OWASP ZAP esté listo
+        run: sleep 20
+
+      - name: Iniciar escaneo activo contra la API
+        run: |
+          curl "http://localhost:8090/JSON/ascan/action/scan/?url=http://host.docker.internal:8080&recurse=true"
+
+      - name: Generar reporte de OWASP ZAP
+        run: |
+          curl "http://localhost:8090/OTHER/core/other/htmlreport/" -o zap-report.html
 
       - name: Subir Reporte OWASP ZAP
         uses: actions/upload-artifact@v4  
@@ -40,9 +54,25 @@ jobs:
 
       - name: 🚨 Revisar vulnerabilidades y fallar el build si hay hallazgos graves
         run: |
-          if grep -q "High Risk Alerts: [1-9]" zap-report.html; then
-            echo "❌ Se encontraron vulnerabilidades graves"
+          HIGH=$(grep -o "High Risk Alerts: [0-9]*" zap-report.html | awk '{print $4}')
+          MEDIUM=$(grep -o "Medium Risk Alerts: [0-9]*" zap-report.html | awk '{print $4}')
+          LOW=$(grep -o "Low Risk Alerts: [0-9]*" zap-report.html | awk '{print $4}')
+
+
+          if [ "$HIGH" -gt 0 ]; then
+            echo "❌ Se encontraron vulnerabilidades GRAVES. Falla el pipeline."
+            exit 1
+          elif [ "$MEDIUM" -gt 5 ]; then
+            echo "⚠️ Se encontraron más de 5 vulnerabilidades de nivel MEDIO. Falla el pipeline."
+            exit 1
+          elif [ "$LOW" -gt 10 ]; then
+            echo "🔵 Hay demasiadas vulnerabilidades de nivel BAJO. Falla el pipeline."
             exit 1
           else
-            echo "✅ No se encontraron vulnerabilidades críticas"
+            echo "✅ No se encontraron vulnerabilidades críticas."
           fi
+
+      - name: 🛑 Limpiar contenedores
+        run: |
+          docker stop securemail_container zap
+          docker rm securemail_container zap
