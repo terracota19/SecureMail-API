@@ -19,12 +19,13 @@ jobs:
 
       - name: 🚀 Iniciar API en Docker
         run: |
-          docker network create zap_net  # Creamos una red para comunicación interna
+          # Crear una red Docker para comunicación entre contenedores
+          docker network create zap_net  
           docker run -d --name securemail_container --network=zap_net \
             -e HYBRID_ANALYSIS_API_KEY="${{ secrets.HYBRID_ANALYSIS_API_KEY }}" \
             -e HYBRID_ANALYSIS_API_URL="${{ secrets.HYBRID_ANALYSIS_API_URL }}" \
             -e ML_MODEL_NAME_URI="${{ secrets.ML_MODEL_NAME_URI }}" \
-            -p 10000:10000 securemail:v1.0.0  
+            -p 10000:10000 securemail:v1.0.0
 
       - name: ⏳ Esperar 15 segundos para que la API inicie
         run: sleep 15
@@ -32,8 +33,8 @@ jobs:
       - name: 🕵️ Escaneo con OWASP ZAP
         uses: zaproxy/action-full-scan@v0.1.0
         with:
-          target: 'http://securemail_container:10000'  # Se usa el nombre del contenedor en la red de Docker
-          cmd_options: '-J report_json.json -w report_md.md -r report_html.html'  # Reportes en JSON, MD y HTML
+          target: 'http://securemail_container:10000'  # Usar la URL interna de Docker
+          cmd_options: '-J report_json.json -w report_md.md -r report_html.html'  # Generar reportes en varios formatos
 
       - name: 📊 Generar Summary de Vulnerabilidades
         run: |
