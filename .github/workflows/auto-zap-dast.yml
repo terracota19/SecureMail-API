@@ -1,3 +1,4 @@
+name: auto-ci-zap-dast-analysis
 on:
   push:
     branches:
@@ -10,13 +11,13 @@ jobs:
     runs-on: ubuntu-latest
     name: Scan API with OWASP ZAP
     steps:
-      - name:  Checkout del código  
+      - name: 📥 Checkout del código  
         uses: actions/checkout@v4  
 
-      - name:  Construir la imagen de la API
+      - name: 🏗️ Construir la imagen de la API
         run: docker build -t securemail:v1.0.0 .
 
-      - name: Iniciar API en Docker
+      - name: 🚀 Iniciar API en Docker
         run: |
           docker network create zap_net  # Creamos una red para comunicación interna
           docker run -d --name securemail_container --network=zap_net \
@@ -25,24 +26,24 @@ jobs:
             -e ML_MODEL_NAME_URI="${{ secrets.ML_MODEL_NAME_URI }}" \
             -p 10000:10000 securemail:v1.0.0  
 
-      - name:  Esperar 15 segundos para que la API inicie
+      - name: ⏳ Esperar 15 segundos para que la API inicie
         run: sleep 15
 
-      - name: Escaneo con OWASP ZAP
+      - name: 🕵️ Escaneo con OWASP ZAP
         uses: zaproxy/action-full-scan@v0.1.0
         with:
-          target: 'http://securemail_container:10000'  
-          fail_action: false 
-          docker_name: 'zap_net'  
+          target: 'http://securemail_container:10000'  # Se usa el nombre del contenedor en la red de Docker
+          rules_file_name: 'rules.zap'  # Opcional: archivo de reglas personalizadas (si es necesario)
+          cmd_options: '-J report_json.json -w report_md.md -r report_html.html'  # Reportes JSON, MD y HTML
 
-      - name: Generar Summary de Vulnerabilidades
+      - name: 📊 Generar Summary de Vulnerabilidades
         run: |
           echo "### 📌 Reporte de OWASP ZAP" > summary.txt
           echo "" >> summary.txt
           echo "🔍 **Vulnerabilidades detectadas:**" >> summary.txt
-          cat report.md >> summary.txt || echo "✅ No se encontraron vulnerabilidades críticas" >> summary.txt
+          cat report_md.md >> summary.txt || echo "✅ No se encontraron vulnerabilidades críticas" >> summary.txt
 
-      - name:  Subir Reporte OWASP ZAP
+      - name: 🗂️ Subir Reporte OWASP ZAP
         uses: actions/upload-artifact@v4
         with:
           name: ZAP-Report
