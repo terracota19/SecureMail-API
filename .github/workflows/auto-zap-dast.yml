@@ -50,9 +50,7 @@ jobs:
             -config api.addrs.addr.name=.* \
             -config api.addrs.addr.regex=true
 
-          echo "⌛ Esperando 60 segundos para que ZAP esté listo..."
-          sleep 60
-
+  
           echo " Ejecutando escaneo con OWASP ZAP contra la API en http://securemail_container:10000..."
           docker exec zap_scan zap-full-scan.py -t http://securemail_container:10000 -r zap_report.html -T 15
 
@@ -67,7 +65,7 @@ jobs:
         run: docker logs zap_scan > zap_logs.txt
 
       - name: Upload ZAP Logs
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: zap-logs
           path: zap_logs.txt
