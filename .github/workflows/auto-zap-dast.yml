@@ -60,7 +60,7 @@ jobs:
         run: docker logs zap_scan > zap_logs.txt
 
       - name: Upload ZAP Logs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v3
         with:
           name: zap-logs
           path: zap_logs.txt
