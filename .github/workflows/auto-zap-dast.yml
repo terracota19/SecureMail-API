@@ -44,7 +44,7 @@ jobs:
           echo " Iniciando OWASP ZAP en segundo plano en el puerto 8090..."
           docker run -u zap -d --network my-network --name zap_scan \
             -p 8090:8090 \
-            -v zap_work_dir:/zap/wrk \ # Monta un volumen temporal
+            -v zap_work_dir:/zap/wrk \ 
             zaproxy/zap-stable zap.sh -daemon \
             -host 0.0.0.0 -port 8090 \
             -config api.addrs.addr.name=.* \
@@ -57,18 +57,6 @@ jobs:
           echo " Guardando reporte de ZAP..."
           docker cp zap_scan:/zap/wrk/zap_report.html .
 
-      - name: Test ZAP Connectivity
-        run: docker exec zap_scan curl http://localhost:8090
-
-      - name: Get ZAP Logs
-        if: always()
-        run: docker logs zap_scan > zap_logs.txt
-
-      - name: Upload ZAP Logs
-        uses: actions/upload-artifact@v4
-        with:
-          name: zap-logs
-          path: zap_logs.txt
 
       - name: Stop and Remove Containers
         if: always()
