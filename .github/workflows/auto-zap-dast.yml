@@ -9,7 +9,7 @@ on:
 
 jobs:
   zap_scan:
-    name: OWASP ZAP API Scan
+    name: OWASP ZAP Full API Scan
     runs-on: ubuntu-latest
 
     steps:
@@ -35,14 +35,21 @@ jobs:
             -p 10000:10000 securemail:v1.0.0  # Expones el puerto 10000 para que ZAP lo pueda escanear
 
           echo "⌛ Esperando 60 segundos para que la API esté lista..."
-          sleep 60  # Es importante asegurar que la API esté completamente levantada antes de escanear
+          sleep 60  # Asegura que la API esté completamente levantada antes de escanear
 
           docker ps  # Verifica que el contenedor está corriendo
+
+      - name: Download OpenAPI Specification (si está disponible)
+        run: |
+          # Verifica que el archivo openapi.json está disponible en la API.
+          curl -o openapi.json http://securemail_container:10000/openapi.json
+        continue-on-error: true  # Si no existe, continuará sin este archivo
 
       - name: Run ZAP API Scan
         uses: zaproxy/action-api-scan@v0.9.0
         with:
           target: "http://securemail_container:10000"  # Apunta al contenedor de la API dentro de la misma red Docker
+          openapi: "openapi.json"  # Si el archivo OpenAPI existe, ZAP lo usará
           fail_action: false 
           format: "json"
           output_file: "zap_report.json"  # Guardar el reporte en formato JSON
