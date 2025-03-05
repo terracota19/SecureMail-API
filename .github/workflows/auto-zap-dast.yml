@@ -1,4 +1,5 @@
 name: AUTO-CI-ZAP-DAST-ANALYSIS
+
 on:
   push:
     branches:
@@ -21,42 +22,46 @@ jobs:
         run: |
           echo "📦 Construyendo la imagen de la API..."
           docker build -t securemail:v1.0.0 .
-          
+
+          echo "🚀 Creando red Docker..."
+          docker network create my-network
+
           echo "🚀 Iniciando API en Docker en el puerto 10000..."
-          docker run -d --name securemail_container \
+          docker run -d --network my-network --name securemail_container \
             -e HYBRID_ANALYSIS_API_KEY="$HYBRID_ANALYSIS_API_KEY" \
             -e HYBRID_ANALYSIS_API_URL="$HYBRID_ANALYSIS_API_URL" \
             -e ML_MODEL_NAME_URI="$ML_MODEL_NAME_URI" \
             -p 10000:10000 securemail:v1.0.0
-          
-          echo "⌛ Esperando 15 segundos para que la API esté lista..."
-          sleep 15
-          
+
+          echo "⌛ Esperando 60 segundos para que la API esté lista..."
+          sleep 60
+
       - name: Run OWASP ZAP Full Scan
         run: |
           echo "🔍 Descargando y ejecutando OWASP ZAP en modo headless..."
           docker pull zaproxy/zap-stable
-          
+
           echo "🚀 Iniciando OWASP ZAP en segundo plano en el puerto 8090..."
-          docker run -u zap -d --name zap_scan \
+          docker run -u zap -d --network my-network --name zap_scan \
             -p 8090:8090 \
             zaproxy/zap-stable zap.sh -daemon \
             -host 0.0.0.0 -port 8090 \
             -config api.addrs.addr.name=.* \
             -config api.addrs.addr.regex=true
-          
-          echo "⌛ Esperando 30 segundos para que ZAP esté listo..."
-          sleep 30
-          
-          echo "🛠 Ejecutando escaneo con OWASP ZAP contra la API en http://localhost:10000..."
-          docker exec zap_scan zap-full-scan.py -t http://localhost:10000 -r zap_report.html
-          
+
+          echo "⌛ Esperando 60 segundos para que ZAP esté listo..."
+          sleep 60
+
+          echo "🛠 Ejecutando escaneo con OWASP ZAP contra la API en http://securemail_container:10000..."
+          docker exec zap_scan zap-full-scan.py -t http://securemail_container:10000 -r zap_report.html
+
           echo "📄 Guardando reporte de ZAP..."
           docker cp zap_scan:/zap/wrk/zap_report.html .
-          
+
       - name: Stop and Remove Containers
         if: always()
         run: |
           echo "🛑 Deteniendo contenedores..."
           docker stop zap_scan securemail_container
           docker rm zap_scan securemail_container
+          docker network rm my-network
