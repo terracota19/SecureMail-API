@@ -28,9 +28,9 @@ jobs:
 
           echo " Iniciando API en Docker en el puerto 10000..."
           docker run -d --network my-network --name securemail_container \
-            -e HYBRID_ANALYSIS_API_KEY="$HYBRID_ANALYSIS_API_KEY" \
-            -e HYBRID_ANALYSIS_API_URL="$HYBRID_ANALYSIS_API_URL" \
-            -e ML_MODEL_NAME_URI="$ML_MODEL_NAME_URI" \
+            -e HYBRID_ANALYSIS_API_KEY="${{ secrets.HYBRID_ANALYSIS_API_KEY }}" \
+            -e HYBRID_ANALYSIS_API_URL="${{ secrets.HYBRID_ANALYSIS_API_URL }}" \
+            -e ML_MODEL_NAME_URI="${{ secrets.ML_MODEL_NAME_URI }}" \
             -p 10000:10000 securemail:v1.0.0
 
           echo "⌛ Esperando 60 segundos para que la API esté lista..."
