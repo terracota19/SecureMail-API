@@ -20,13 +20,13 @@ jobs:
 
       - name: Build and Run API Container
         run: |
-          echo "📦 Construyendo la imagen de la API..."
+          echo " Construyendo la imagen de la API..."
           docker build -t securemail:v1.0.0 .
 
-          echo "🚀 Creando red Docker..."
+          echo " Creando red Docker..."
           docker network create my-network
 
-          echo "🚀 Iniciando API en Docker en el puerto 10000..."
+          echo " Iniciando API en Docker en el puerto 10000..."
           docker run -d --network my-network --name securemail_container \
             -e HYBRID_ANALYSIS_API_KEY="$HYBRID_ANALYSIS_API_KEY" \
             -e HYBRID_ANALYSIS_API_URL="$HYBRID_ANALYSIS_API_URL" \
@@ -38,12 +38,13 @@ jobs:
 
       - name: Run OWASP ZAP Full Scan
         run: |
-          echo "🔍 Descargando y ejecutando OWASP ZAP en modo headless..."
+          echo " Descargando y ejecutando OWASP ZAP en modo headless..."
           docker pull zaproxy/zap-stable
 
-          echo "🚀 Iniciando OWASP ZAP en segundo plano en el puerto 8090..."
+          echo " Iniciando OWASP ZAP en segundo plano en el puerto 8090..."
           docker run -u zap -d --network my-network --name zap_scan \
             -p 8090:8090 \
+            -v zap_work_dir:/zap/wrk \
             zaproxy/zap-stable zap.sh -daemon \
             -host 0.0.0.0 -port 8090 \
             -config api.addrs.addr.name=.* \
@@ -52,16 +53,16 @@ jobs:
           echo "⌛ Esperando 60 segundos para que ZAP esté listo..."
           sleep 60
 
-          echo "🛠 Ejecutando escaneo con OWASP ZAP contra la API en http://securemail_container:10000..."
+          echo " Ejecutando escaneo con OWASP ZAP contra la API en http://securemail_container:10000..."
           docker exec zap_scan zap-full-scan.py -t http://securemail_container:10000 -r zap_report.html
 
-          echo "📄 Guardando reporte de ZAP..."
+          echo " Guardando reporte de ZAP..."
           docker cp zap_scan:/zap/wrk/zap_report.html .
 
       - name: Stop and Remove Containers
         if: always()
         run: |
-          echo "🛑 Deteniendo contenedores..."
+          echo " Deteniendo contenedores..."
           docker stop zap_scan securemail_container
           docker rm zap_scan securemail_container
           docker network rm my-network
