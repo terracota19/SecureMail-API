@@ -1,4 +1,4 @@
-name: auto-ci-zap-dast-analysis
+name: AUTO-CI-ZAP-DAST-ANALYSIS
 on:
   push:
     branches:
@@ -31,30 +31,29 @@ jobs:
           
           echo "⌛ Esperando 15 segundos para que la API esté lista..."
           sleep 15
-
+          
       - name: Run OWASP ZAP Full Scan
         run: |
           echo "🔍 Descargando y ejecutando OWASP ZAP en modo headless..."
-          docker pull owasp/zap2docker-stable
+          docker pull zaproxy/zap-stable
           
           echo "🚀 Iniciando OWASP ZAP en segundo plano en el puerto 8090..."
           docker run -u zap -d --name zap_scan \
             -p 8090:8090 \
-            owasp/zap2docker-stable zap.sh -daemon \
+            zaproxy/zap-stable zap.sh -daemon \
             -host 0.0.0.0 -port 8090 \
-            -config api.disablekey=true \
             -config api.addrs.addr.name=.* \
             -config api.addrs.addr.regex=true
-
+          
           echo "⌛ Esperando 30 segundos para que ZAP esté listo..."
           sleep 30
-
+          
           echo "🛠 Ejecutando escaneo con OWASP ZAP contra la API en http://localhost:10000..."
           docker exec zap_scan zap-full-scan.py -t http://localhost:10000 -r zap_report.html
-
+          
           echo "📄 Guardando reporte de ZAP..."
           docker cp zap_scan:/zap/wrk/zap_report.html .
-
+          
       - name: Stop and Remove Containers
         if: always()
         run: |
