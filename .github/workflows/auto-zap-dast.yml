@@ -28,7 +28,7 @@ jobs:
             -e HYBRID_ANALYSIS_API_URL="$HYBRID_ANALYSIS_API_URL" \
             -e ML_MODEL_NAME_URI="$ML_MODEL_NAME_URI" \
             -p 8080:8080 securemail:v1.0.0
-          sleep 10
+          sleep 15
 
       - name: Run OWASP ZAP Full Scan
         uses: zaproxy/action-full-scan@v0.5.0
