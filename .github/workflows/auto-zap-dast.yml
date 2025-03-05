@@ -32,6 +32,7 @@ jobs:
             -p 10000:10000 securemail:v1.0.0
           echo "⌛ Esperando 60 segundos para que la API esté lista..."
           sleep 60
+          docker ps
 
       - name: Debug ZAP Run Command
         run: |
