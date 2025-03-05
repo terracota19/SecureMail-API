@@ -36,7 +36,7 @@ jobs:
 
       - name: Download OpenAPI Specification (si está disponible)
         run: |
-          curl -o openapi.json http://securemail_container:10000/openapi.json
+          curl -o openapi.json http://localhost:10000/openapi.json
           continue-on-error: true  
 
       - name: Run ZAP API Scan
