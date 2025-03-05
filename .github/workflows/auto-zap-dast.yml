@@ -16,9 +16,6 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up Docker
-        run: docker --version  # Verifica que Docker esté instalado en el runner
-
       - name: Build and Run API Container
         run: |
           echo "Construyendo la imagen de la API..."
@@ -32,38 +29,35 @@ jobs:
             -e HYBRID_ANALYSIS_API_KEY="${{ secrets.HYBRID_ANALYSIS_API_KEY }}" \
             -e HYBRID_ANALYSIS_API_URL="${{ secrets.HYBRID_ANALYSIS_API_URL }}" \
             -e ML_MODEL_NAME_URI="${{ secrets.ML_MODEL_NAME_URI }}" \
-            -p 10000:10000 securemail:v1.0.0  # Expones el puerto 10000 para que ZAP lo pueda escanear
+            -p 10000:10000 securemail:v1.0.0  
 
           echo "⌛ Esperando 60 segundos para que la API esté lista..."
-          sleep 60  # Asegura que la API esté completamente levantada antes de escanear
-
-          docker ps  # Verifica que el contenedor está corriendo
+          sleep 60 
 
       - name: Download OpenAPI Specification (si está disponible)
         run: |
-          # Verifica que el archivo openapi.json está disponible en la API.
           curl -o openapi.json http://securemail_container:10000/openapi.json
-        continue-on-error: true  # Si no existe, continuará sin este archivo
+          continue-on-error: true  
 
       - name: Run ZAP API Scan
         uses: zaproxy/action-api-scan@v0.9.0
         with:
-          target: "http://securemail_container:10000"  # Apunta al contenedor de la API dentro de la misma red Docker
-          openapi: "openapi.json"  # Si el archivo OpenAPI existe, ZAP lo usará
+          target: "http://securemail_container:10000" 
+          openapi: "openapi.json" 
           fail_action: false 
           format: "json"
-          output_file: "zap_report.json"  # Guardar el reporte en formato JSON
+          output_file: "zap_report.json" 
 
       - name: Upload ZAP Report
         uses: actions/upload-artifact@v4
         with:
           name: zap-report
-          path: zap_report.json  # Sube el reporte generado a GitHub Actions
+          path: zap_report.json 
 
       - name: Stop and Remove Containers
-        if: always()  # Este paso se ejecuta incluso si falla el anterior
+        if: always()  
         run: |
           echo "Deteniendo contenedores..."
-          docker stop securemail_container  # Detiene el contenedor
-          docker rm securemail_container  # Elimina el contenedor
-          docker network rm zap-network  # Elimina la red Docker creada para la comunicación
+          docker stop securemail_container 
+          docker rm securemail_container  
+          docker network rm zap-network  
