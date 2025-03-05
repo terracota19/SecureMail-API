@@ -48,7 +48,8 @@ jobs:
             -v zap_work_dir:/zap/wrk \
             zaproxy/zap-stable zap.sh -daemon \
             -host 0.0.0.0 -port 8090
-
+          sleep 60
+          docker ps 
           echo " Ejecutando escaneo con OWASP ZAP contra la API en http://securemail_container:10000..."
           docker exec zap_scan zap-full-scan.py -t http://securemail_container:10000 -r zap_report.html -T 15
 
