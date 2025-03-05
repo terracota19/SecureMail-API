@@ -49,10 +49,26 @@ jobs:
             zaproxy/zap-stable zap.sh -daemon \
             -host 0.0.0.0 -port 8090
           sleep 60
-          docker ps 
+          docker ps
+
+      - name: Verify ZAP API Connectivity
+        run: |
+          timeout 60 bash -c 'until curl --fail http://localhost:8090; do echo "."; sleep 5; done'
+
+      - name: Get ZAP Logs
+        if: always()
+        run: docker logs zap_scan > zap_logs.txt
+
+      - name: Upload ZAP Logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-logs
+          path: zap_logs.txt
+
+      - name: Run ZAP Scan
+        run: |
           echo " Ejecutando escaneo con OWASP ZAP contra la API en http://securemail_container:10000..."
           docker exec zap_scan zap-full-scan.py -t http://securemail_container:10000 -r zap_report.html -T 15
-
           echo " Guardando reporte de ZAP..."
           docker cp zap_scan:/zap/wrk/zap_report.html .
 
