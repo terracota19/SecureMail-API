@@ -8,49 +8,38 @@ on:
 
 jobs:
   zap_scan:
+    name: OWASP ZAP Full Scan
     runs-on: ubuntu-latest
-    name: Scan API with OWASP ZAP
     steps:
-      - name: 📥 Checkout del código  
-        uses: actions/checkout@v4  
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-      - name: 🏗️ Construir la imagen de la API
-        run: docker build -t securemail:v1.0.0 .
-
-      - name: 🚀 Iniciar API en Docker
+      - name: Set up Docker
         run: |
-          # Crear una red Docker para comunicación entre contenedores
-          docker network create zap_net  
-          docker run -d --name securemail_container --network=zap_net \
-            -e HYBRID_ANALYSIS_API_KEY="${{ secrets.HYBRID_ANALYSIS_API_KEY }}" \
-            -e HYBRID_ANALYSIS_API_URL="${{ secrets.HYBRID_ANALYSIS_API_URL }}" \
-            -e ML_MODEL_NAME_URI="${{ secrets.ML_MODEL_NAME_URI }}" \
-            -p 10000:10000 securemail:v1.0.0
+          docker --version
 
-      - name: ⏳ Esperar 15 segundos para que la API inicie
-        run: sleep 15
-
-      - name: 🕵️ Escaneo con OWASP ZAP
-        uses: zaproxy/action-full-scan@v0.1.0
-        with:
-          target: 'http://securemail_container:10000'  # Usar la URL interna de Docker
-          cmd_options: '-J report_json.json -w report_md.md -r report_html.html'  # Generar reportes en varios formatos
-
-      - name: 📊 Generar Summary de Vulnerabilidades
+      - name: Build and Run API Container
         run: |
-          echo "### 📌 Reporte de OWASP ZAP" > summary.txt
-          echo "" >> summary.txt
-          echo "🔍 **Vulnerabilidades detectadas:**" >> summary.txt
-          cat report_md.md >> summary.txt || echo "✅ No se encontraron vulnerabilidades críticas" >> summary.txt
+          echo "📦 Construyendo la imagen de la API..."
+          docker build -t securemail:v1.0.0 .
+          echo "🚀 Iniciando API en Docker..."
+          docker run -d --name securemail_container \
+            -e HYBRID_ANALYSIS_API_KEY="$HYBRID_ANALYSIS_API_KEY" \
+            -e HYBRID_ANALYSIS_API_URL="$HYBRID_ANALYSIS_API_URL" \
+            -e ML_MODEL_NAME_URI="$ML_MODEL_NAME_URI" \
+            -p 8080:8080 securemail:v1.0.0
+          sleep 10
 
-      - name: 🗂️ Subir Reporte OWASP ZAP
-        uses: actions/upload-artifact@v4
+      - name: Run OWASP ZAP Full Scan
+        uses: zaproxy/action-full-scan@v0.5.0
         with:
-          name: ZAP-Report
-          path: summary.txt
+          target: "http://localhost:8080"
+          docker_name: "owasp/zap2docker-stable"
+          rules_file_name: ".zap/rules.tsv"
+          cmd_options: "-a"
 
-      - name: 🛑 Limpiar contenedores y red de Docker
+      - name: Stop and Remove API Container
+        if: always()
         run: |
           docker stop securemail_container
           docker rm securemail_container
-          docker network rm zap_net
