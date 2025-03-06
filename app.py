@@ -17,6 +17,8 @@ from pydantic import BaseModel, EmailStr
 from fastapi import FastAPI, HTTPException, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
+from fastapi.responses import JSONResponse
+
 
 # Cargar variables de entorno y modelo
 load_dotenv()
@@ -181,6 +183,10 @@ async def analyze_attachment(attachment: str):
     except Exception as e:
         return {"verdict": "unknown", "detail": str(e)}
 
+
+@app.get("/openapi.json")
+def get_openapi():
+    return JSONResponse(content=app.openapi())
 
 # Endpoint Principal -- Limitar a 5 por minuto para evitar ataques de denegación de servicio DDOS O DOS con slowapi.limiter.
 @app.post("/")
