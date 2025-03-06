@@ -1,12 +1,3 @@
-name: AUTO-CI-ZAP-DAST-ANALYSIS
-
-on:
-  push:
-    branches:
-      - main
-      - development
-      - preproduction
-
 jobs:
   zap_scan:
     name: OWASP ZAP Full API Scan
@@ -16,8 +7,14 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      # Paso para instalar Docker y Docker Compose
       - name: Set up Docker
         uses: docker/setup-buildx-action@v2
+
+      - name: Install Docker Compose
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y docker-compose
 
       - name: Build and Run API Container
         run: |
