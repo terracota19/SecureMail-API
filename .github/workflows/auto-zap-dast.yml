@@ -22,22 +22,18 @@ jobs:
       - name: Build and Run API Container
         run: |
           echo "Construyendo la imagen de la API..."
-          docker-compose up --build -d
+          docker-compose -f docker-compose.yml build
+          docker-compose -f docker-compose.yml up -d
 
       - name: Wait for API to be ready
         run: |
           echo "Esperando 60 segundos para que la API esté lista..."
           sleep 60
 
-      - name: Download OpenAPI Specification (si está disponible)
-        run: |
-          curl -o openapi.json http://localhost:10000/openapi.json
-          continue-on-error: true
-
       - name: Run ZAP API Scan
         uses: zaproxy/action-api-scan@v0.9.0
         with:
-          target: "http://securemail_container:10000"
+          target: "http://securemail_container:10000"  
           openapi: "openapi.json"
           fail_action: false
           format: "json"
