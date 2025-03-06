@@ -24,6 +24,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y docker-compose
+      - name: Verificar si docker-compose.yml está presente
+        run: |
+          echo "Comprobando si docker-compose.yml está en la raíz del repositorio..."
+          cat docker-compose.yml
+
 
       - name: Build and Run API Container
         run: |
