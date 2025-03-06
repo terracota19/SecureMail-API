@@ -1,3 +1,12 @@
+name: AUTO-CI-ZAP-DAST-ANALYSIS
+
+on:
+  push:
+    branches:
+      - main
+      - development
+      - preproduction
+
 jobs:
   zap_scan:
     name: OWASP ZAP Full API Scan
