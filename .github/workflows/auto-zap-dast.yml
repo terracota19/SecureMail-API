@@ -38,7 +38,7 @@ jobs:
       - name: Check API availability
         run: |
           echo "Verificando si la API está disponible..."
-          curl -I http://securemail_container:10000/openapi.json || exit 1
+          curl -I http://localhost:10000/openapi.json || exit 1
 
 
       - name: Run ZAP API Scan
