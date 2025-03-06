@@ -35,10 +35,11 @@ jobs:
           HYBRID_ANALYSIS_API_URL: ${{ secrets.HYBRID_ANALYSIS_API_URL }}
           ML_MODEL_NAME_URI: ${{ secrets.ML_MODEL_NAME_URI }}
 
-      - name: Wait for API to be ready
+      - name: Check API availability
         run: |
-          echo "Esperando 60 segundos para que la API esté lista..."
-          sleep 60
+          echo "Verificando si la API está disponible..."
+          curl -I http://securemail_container:10000/openapi.json || exit 1
+
 
       - name: Run ZAP API Scan
         uses: zaproxy/action-api-scan@v0.9.0
