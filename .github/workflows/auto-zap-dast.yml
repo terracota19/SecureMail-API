@@ -22,8 +22,8 @@ jobs:
           docker build -t securemail:v1.0.0 .
 
           echo "Creando red Docker..."
-          docker network create zap-network  # Crea la red para permitir comunicación entre contenedores
-
+          docker network create zap-network  
+          
           echo "Iniciando contenedor de la API..."
           docker run -d --network zap-network --name securemail_container \
             -e HYBRID_ANALYSIS_API_KEY="${{ secrets.HYBRID_ANALYSIS_API_KEY }}" \
