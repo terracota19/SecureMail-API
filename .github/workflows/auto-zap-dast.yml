@@ -30,6 +30,10 @@ jobs:
           echo "Construyendo la imagen de la API..."
           docker-compose -f docker-compose.yml build
           docker-compose -f docker-compose.yml up -d
+        env:
+          HYBRID_ANALYSIS_API_KEY: ${{ secrets.HYBRID_ANALYSIS_API_KEY }}
+          HYBRID_ANALYSIS_API_URL: ${{ secrets.HYBRID_ANALYSIS_API_URL }}
+          ML_MODEL_NAME_URI: ${{ secrets.ML_MODEL_NAME_URI }}
 
       - name: Wait for API to be ready
         run: |
