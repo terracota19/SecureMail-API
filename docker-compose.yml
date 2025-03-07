@@ -10,6 +10,10 @@ services:
       - "10000:10000"
     networks:
       - zap-network
+    environment:
+      HYBRID_ANALYSIS_API_KEY: ${HYBRID_ANALYSIS_API_KEY}
+      HYBRID_ANALYSIS_API_URL: ${HYBRID_ANALYSIS_API_URL}
+      ML_MODEL_NAME_URI: ${ML_MODEL_NAME_URI}
 
   zap:
     image: zaproxy/zap-stable
