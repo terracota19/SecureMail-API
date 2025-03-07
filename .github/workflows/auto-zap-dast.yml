@@ -31,17 +31,15 @@ jobs:
           echo "Construyendo la imagen de la API..."
           docker-compose -f docker-compose.yml build
           docker-compose -f docker-compose.yml up -d
-          docker-compose logs
         env:
           HYBRID_ANALYSIS_API_KEY: ${{ secrets.HYBRID_ANALYSIS_API_KEY }}
           HYBRID_ANALYSIS_API_URL: ${{ secrets.HYBRID_ANALYSIS_API_URL }}
           ML_MODEL_NAME_URI: ${{ secrets.ML_MODEL_NAME_URI }}
 
-      # Esperar hasta que la API esté completamente disponible
       - name: Wait for API to be ready
         run: |
           echo "Esperando a que la API esté disponible..."
-          until curl -s http://localhost:10000/health | grep "running"; do
+          until curl -s http://localhost:10000/health | grep '"status": "running"'; do
             echo "La API no está lista, esperando 15 segundos..."
             sleep 15
           done
