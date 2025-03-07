@@ -41,9 +41,16 @@ jobs:
           docker-compose ps
           docker-compose logs
           
-      - name: Wait for API to be ready
+      - name: Wait for API to be Ready
         run: |
-          docker exec -it zap_container ping securemail_container
+          echo "Esperando a que la API esté disponible..."
+          until curl -s -o /dev/null -w "%{http_code}" http://api:10000/health | grep -q "200"; do
+            echo "API no disponible, esperando 30 segundos..."
+            curl -s -o /dev/null -w "Status code: %{http_code}" http://api:10000/health
+            sleep 30
+          done
+          echo "✅ API disponible (Código 200), continuando..."
+
 
 
       # Verificar si la API está disponible antes de escanear
