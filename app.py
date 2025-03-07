@@ -187,6 +187,10 @@ async def analyze_attachment(attachment: str):
 @app.get("/openapi.json")
 def get_openapi():
     return JSONResponse(content=app.openapi())
+ 
+@app.get("/health")
+async def health_check():
+    return {"status": "running"}
 
 # Endpoint Principal -- Limitar a 5 por minuto para evitar ataques de denegación de servicio DDOS O DOS con slowapi.limiter.
 @app.post("/")
