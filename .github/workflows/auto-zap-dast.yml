@@ -40,7 +40,12 @@ jobs:
         run: |
           docker-compose ps
           docker-compose logs
-          
+      - name: Show Docker Container IPs
+        run: |
+          echo "Mostrando IPs de los contenedores..."
+          docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' securemail_container
+          docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' zap_container
+    
       - name: Wait for API to be Ready
         run: |
           echo "Esperando a que la API esté disponible..."
