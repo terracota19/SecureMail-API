@@ -39,13 +39,13 @@ jobs:
       - name: Check API availability
         run: |
           echo "Verificando si la API está disponible..."
-          curl -I http://api:10000/openapi.json || exit 1
+          curl -I http://securemail_container:10000/openapi.json || exit 1
 
 
       - name: Run ZAP API Scan
         uses: zaproxy/action-api-scan@v0.9.0
         with:
-          target: "http://api:10000/openapi.json"
+          target: "http://securemail_container:10000/openapi.json"
           format: "openapi"
           fail_action: false
           cmd_options: "-J zap_report.json -r zap_report.html"
