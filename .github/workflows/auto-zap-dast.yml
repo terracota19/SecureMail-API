@@ -16,7 +16,6 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # Paso para instalar Docker y Docker Compose
       - name: Set up Docker
         uses: docker/setup-buildx-action@v2
 
@@ -25,64 +24,48 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y docker-compose
 
-      # Paso para construir y correr los contenedores
       - name: Build and Run API Container
         run: |
-          echo "Construyendo la imagen de la API..."
           docker-compose -f docker-compose.yml build
           docker-compose -f docker-compose.yml up -d
         env:
           HYBRID_ANALYSIS_API_KEY: ${{ secrets.HYBRID_ANALYSIS_API_KEY }}
           HYBRID_ANALYSIS_API_URL: ${{ secrets.HYBRID_ANALYSIS_API_URL }}
           ML_MODEL_NAME_URI: ${{ secrets.ML_MODEL_NAME_URI }}
-          
-      - name : debug
+
+      - name: debug
         run: |
           docker-compose ps
-          docker-compose logs
-      - name: Show Docker Container IPs
-        run: |
-          echo "Mostrando IPs de los contenedores..."
-          docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' securemail_container
-          docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' zap_container
-    
+          docker-compose logs api
+          docker-compose logs zap
+
       - name: Wait for API to be Ready
         run: |
-          echo "Esperando a que la API esté disponible..."
-          until curl -s -o /dev/null -w "%{http_code}" http://localhost:10000/health | grep -q "200"; do
+          until curl -s -o /dev/null -w "%{http_code}" http://securemail_container:10000/health | grep -q "200"; do
             echo "API no disponible, esperando 30 segundos..."
-            curl -s -o /dev/null -w "Status code: %{http_code}" http://localhost:10000/health
             sleep 30
           done
           echo "✅ API disponible (Código 200), continuando..."
 
-
-
-      # Verificar si la API está disponible antes de escanear
       - name: Check API availability
         run: |
-          echo "Verificando si la API está disponible..."
-          curl -I http://securemail:v1.0.0:10000/openapi.json || exit 1
+          curl -I http://securemail_container:10000/openapi.json || exit 1
 
-      # Ejecutar el escaneo de ZAP
       - name: Run ZAP API Scan
         uses: zaproxy/action-api-scan@v0.9.0
         with:
-          target: "http://securemail:v1.0.0:10000/openapi.json"
+          target: "http://securemail_container:10000/openapi.json"
           format: "openapi"
           fail_action: false
           cmd_options: "-J zap_report.json -r zap_report.html"
 
-      # Subir el informe de ZAP
       - name: Upload ZAP Report
         uses: actions/upload-artifact@v4
         with:
           name: zap-report
           path: zap_report.json
 
-      # Detener y eliminar los contenedores
       - name: Stop and Remove Containers
         if: always()
         run: |
-          echo "Deteniendo contenedores..."
           docker-compose down
