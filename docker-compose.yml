@@ -6,13 +6,10 @@ services:
       context: .
     image: securemail:v1.0.0
     container_name: securemail_container
-   
     ports:
       - "10000:10000"
     networks:
       - zap-network
-    depends_on:
-      - zap
 
   zap:
     image: zaproxy/zap-stable
@@ -22,9 +19,9 @@ services:
     networks:
       - zap-network
     command: >
-      zap-api-scan.py -t http://api:10000 -f openapi -r zap_report.json
+      sh -c "until curl -s http://api:10000/health; do sleep 5; done && zap-api-scan.py -t http://api:10000/openapi.json -f openapi -r zap_report.json"
     environment:
-      - ZAP_HEADLESS=true   
+      - ZAP_HEADLESS=true
 
 networks:
   zap-network:
