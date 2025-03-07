@@ -78,13 +78,11 @@ SecureMail follows a **structured data processing pipeline** to analyze emails. 
 ![dataflow](./images/dataflow.png)
 
 
-### SLSA Code Signing
-> [!WARNING] 
-> If you do not properly secure your code signing process, you risk introducing malicious code into your software.
-
 - **Code Signing with GPG key**:
   - Uses GnuPG to enhance Code Signing security within Github Commits.
 
+> [!WARNING] 
+> If you do not properly secure your code signing process, you risk introducing malicious code into your software.
 
 ---
 
