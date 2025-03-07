@@ -82,7 +82,7 @@ SecureMail follows a **structured data processing pipeline** to analyze emails. 
   - Uses GnuPG to enhance Code Signing security within Github Commits.
 
 > [!WARNING] 
-> If you do not properly secure your code signing process, you risk introducing malicious code into your software.
+> If you do not properly secure your code signing process, you risk introducing malicious code into your software eg: SolarWinds.
 
 ---
 
