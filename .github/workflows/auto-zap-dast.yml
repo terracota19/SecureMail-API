@@ -38,7 +38,11 @@ jobs:
           HYBRID_ANALYSIS_API_KEY: ${{ secrets.HYBRID_ANALYSIS_API_KEY }}
           HYBRID_ANALYSIS_API_URL: ${{ secrets.HYBRID_ANALYSIS_API_URL }}
           ML_MODEL_NAME_URI: ${{ secrets.ML_MODEL_NAME_URI }}
-    
+
+      - name: Verificar si docker-compose.yml está presente
+        run: |
+          docker network inspect zap-network
+          
       - name: Check API availability
         run: |
           echo "Verificando si la API está disponible..."
@@ -53,9 +57,6 @@ jobs:
           fail_action: false
           cmd_options: "-J zap_report.json -r zap_report.html"
 
-      - name: Verificar si docker-compose.yml está presente
-        run: |
-          docker network inspect zap-network
 
       - name: Upload ZAP Report
         uses: actions/upload-artifact@v4
