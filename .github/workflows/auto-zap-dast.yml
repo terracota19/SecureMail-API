@@ -37,8 +37,8 @@ jobs:
         run: |
           echo "Esperando a que la API esté disponible..."
           until curl -s http://localhost:10000/health | grep "running"; do
-            echo "La API no está lista, esperando 5 segundos..."
-            sleep 5
+            echo "La API no está lista, esperando 15 segundos..."
+            sleep 15
           done
           echo "API lista, continuando con el escaneo..."
 
