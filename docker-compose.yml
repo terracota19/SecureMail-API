@@ -6,10 +6,6 @@ services:
       context: .
     image: securemail:v1.0.0
     container_name: securemail_container
-    environment:
-      - HYBRID_ANALYSIS_API_KEY=${{ secrets.HYBRID_ANALYSIS_API_KEY }}
-      - HYBRID_ANALYSIS_API_URL=${{ secrets.HYBRID_ANALYSIS_API_URL }}
-      - ML_MODEL_NAME_URI=${{ secrets.ML_MODEL_NAME_URI }}
     ports:
       - "10000:10000"
     networks:
