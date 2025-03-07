@@ -18,6 +18,8 @@ services:
   zap:
     image: zaproxy/zap-stable
     container_name: zap_container
+    volumes:
+      - ./:/zap/wrk
     ports:
       - "8080:8080"  
     networks:
