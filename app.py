@@ -39,7 +39,7 @@ HYBRID_ANALYSIS_API_KEY = os.getenv("HYBRID_ANALYSIS_API_KEY")
 HYBRID_ANALYSIS_API_URL = os.getenv("HYBRID_ANALYSIS_API_URL")
 ML_MODEL_NAME_URI = os.getenv("ML_MODEL_NAME_URI")
 
-model = joblib.load(ML_MODEL_NAME_URI) 
+model = joblib.load("./models/XGBoost.pkl") 
 
 
 #Validación de datos de entrada de usuario
