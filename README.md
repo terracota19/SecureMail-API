@@ -51,7 +51,7 @@ SecureMail integrates advanced **ML models** including **NLP techniques** and se
 - **Pytest**: Ensures API response accuracy through rigorous testing.
 - **Snyk**: Conducts static security analysis (SAST + SCA) to detect vulnerabilities.
 - **Docker Bench Security**: Assesses Docker container security configurations.
-
+- **OWASP ZAP**: Conduct Dynamic Applicaction Security Testing (DAST)
 
 
 ---
@@ -62,6 +62,7 @@ SecureMail integrates advanced **ML models** including **NLP techniques** and se
 - **Continuous Security Scanning**:
   - **Snyk** for dependency vulnerability detection in production.
   - **Docker Bench Security** for runtime container security evaluations.
+  - **OWASP ZAP** for dynamic testing.
 - **Deployment Platform**:
   - Hosted on **Render (PaaS)** using Docker-based deployment for reliability.
 
@@ -82,13 +83,12 @@ SecureMail follows a **structured data processing pipeline** to analyze emails. 
 > If you do not properly secure your code signing process, you risk introducing malicious code into your software.
 
 - **Code Signing with GPG key**:
-  - Uses GnuPG to enhance Code Signing security.
+  - Uses GnuPG to enhance Code Signing security within Github Commits.
 
 
 ---
 
 ## Future Enhancements
-
 
 - **Integrating Application Security Orchestration and Correlation (ASOC)**.
 - **Advanced Threat Modeling**:
