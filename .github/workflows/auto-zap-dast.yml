@@ -33,7 +33,7 @@ jobs:
           HYBRID_ANALYSIS_API_URL: ${{ secrets.HYBRID_ANALYSIS_API_URL }}
           ML_MODEL_NAME_URI: ${{ secrets.ML_MODEL_NAME_URI }}
 
-      - name: debug
+      - name: Debug API and ZAP Logs
         run: |
           docker-compose ps
           docker-compose logs api
@@ -59,11 +59,32 @@ jobs:
           fail_action: false
           cmd_options: "-J zap_report.json -r zap_report.html"
 
-      - name: Upload ZAP Report
+      - name: Upload ZAP Report as Artifact (JSON)
         uses: actions/upload-artifact@v4
         with:
-          name: zap-report
+          name: zap-report-json
           path: zap_report.json
+
+      - name: Upload ZAP Report as Artifact (HTML)
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-report-html
+          path: zap_report.html
+
+      - name: Parse and Output ZAP Alerts
+        run: |
+          echo "🛠️ Analizando el reporte ZAP..."
+          jq -r '.site[].alerts[] | "🔹 **Alert:** \(.alert)\n   - **Risk:** \(.riskdesc)\n   - **Instances:** \(.count)\n"' zap_report.json | tee zap_summary.md
+
+      - name: 📢 Publicar Reporte en Summary
+        run: |
+          echo "## 🚨 OWASP ZAP DAST Report 🔍" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          cat zap_summary.md >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**📄 Reportes:**" >> $GITHUB_STEP_SUMMARY
+          echo "- [🔗 Reporte JSON](../artifacts/zap-report-json)" >> $GITHUB_STEP_SUMMARY
+          echo "- [🔗 Reporte HTML](../artifacts/zap-report-html)" >> $GITHUB_STEP_SUMMARY
 
       - name: Stop and Remove Containers
         if: always()
