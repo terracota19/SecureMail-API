@@ -35,7 +35,12 @@ jobs:
           HYBRID_ANALYSIS_API_KEY: ${{ secrets.HYBRID_ANALYSIS_API_KEY }}
           HYBRID_ANALYSIS_API_URL: ${{ secrets.HYBRID_ANALYSIS_API_URL }}
           ML_MODEL_NAME_URI: ${{ secrets.ML_MODEL_NAME_URI }}
-
+          
+      - name : debug
+        run: |
+          docker-compose ps
+          docker-compose logs
+          
       - name: Wait for API to be ready
         run: |
           echo "Esperando a que la API esté disponible..."
