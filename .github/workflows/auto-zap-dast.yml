@@ -25,43 +25,46 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y docker-compose
 
+      # Paso para construir y correr los contenedores
       - name: Build and Run API Container
         run: |
           echo "Construyendo la imagen de la API..."
-          docker network create zap-network
           docker-compose -f docker-compose.yml build
           docker-compose -f docker-compose.yml up -d
-        env:
-          HYBRID_ANALYSIS_API_KEY: ${{ secrets.HYBRID_ANALYSIS_API_KEY }}
-          HYBRID_ANALYSIS_API_URL: ${{ secrets.HYBRID_ANALYSIS_API_URL }}
-          ML_MODEL_NAME_URI: ${{ secrets.ML_MODEL_NAME_URI }}
 
-
-      - name: Verificar si docker-compose.yml está presente
+      # Esperar hasta que la API esté completamente disponible
+      - name: Wait for API to be ready
         run: |
-          docker network inspect zap-network
-          
+          echo "Esperando a que la API esté disponible..."
+          until curl -s http://localhost:10000/health | grep "running"; do
+            echo "La API no está lista, esperando 5 segundos..."
+            sleep 5
+          done
+          echo "API lista, continuando con el escaneo..."
+
+      # Verificar si la API está disponible antes de escanear
       - name: Check API availability
         run: |
           echo "Verificando si la API está disponible..."
-          curl -I http://api:10000/openapi.json || exit 1
+          curl -I http://localhost:10000/openapi.json || exit 1
 
-
+      # Ejecutar el escaneo de ZAP
       - name: Run ZAP API Scan
         uses: zaproxy/action-api-scan@v0.9.0
         with:
-          target: "http://api:10000/openapi.json"
+          target: "http://localhost:10000/openapi.json"
           format: "openapi"
           fail_action: false
           cmd_options: "-J zap_report.json -r zap_report.html"
 
-
+      # Subir el informe de ZAP
       - name: Upload ZAP Report
         uses: actions/upload-artifact@v4
         with:
           name: zap-report
           path: zap_report.json
 
+      # Detener y eliminar los contenedores
       - name: Stop and Remove Containers
         if: always()
         run: |
