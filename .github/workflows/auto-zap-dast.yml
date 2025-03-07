@@ -24,7 +24,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y docker-compose
-  
+
+      - name: Crar la red sobre la que se comunicaran los dockers
+        run: |
+          docker network create zap-network
         
       - name: Build and Run API Container
         run: |
@@ -35,11 +38,6 @@ jobs:
           HYBRID_ANALYSIS_API_KEY: ${{ secrets.HYBRID_ANALYSIS_API_KEY }}
           HYBRID_ANALYSIS_API_URL: ${{ secrets.HYBRID_ANALYSIS_API_URL }}
           ML_MODEL_NAME_URI: ${{ secrets.ML_MODEL_NAME_URI }}
-
-      - name: Verificar si la red de Docker existe
-        run: |
-          echo "Verificando si la red de Docker 'zap-network' existe..."
-          docker network inspect zap-network || (echo "La red no existe, creándola..." && docker network create zap-network)
     
       - name: Check API availability
         run: |
