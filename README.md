@@ -1,11 +1,4 @@
-```
-███████ ███████  ██████ ██    ██ ██████  ███████ ███    ███  █████  ██ ██      
-██      ██      ██      ██    ██ ██   ██ ██      ████  ████ ██   ██ ██ ██
-███████ █████   ██      ██    ██ ██████  █████   ██ ████ ██ ███████ ██ ██  
-     ██ ██      ██      ██    ██ ██   ██ ██      ██  ██  ██ ██   ██ ██ ██
-███████ ███████  ██████  ██████  ██   ██ ███████ ██      ██ ██   ██ ██ ███████
-                                                                               
-```
+![SecureMail](https://github.com/user-attachments/assets/24ecc351-7873-45a6-8c4c-4d56cd88d7d7)
 
 ## Project Overview
 SecureMail integrates advanced **ML models** including **NLP techniques** and security best practices to detect phishing emails efficiently. It follows a **secure software development lifecycle (SDLC)**, implementing security measures in all phases: **development, CI/CD, and production**.
