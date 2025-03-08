@@ -3,8 +3,8 @@ name: GitHub Auto Render CD Deployment
 on:
   push:
     branches:
-      - maine
-      #- development  
+      - main
+      - development  
 
 jobs:
   Deploy-on-Render:
