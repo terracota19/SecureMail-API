@@ -1,15 +1,38 @@
 {
   "openapi": "3.0.0",
   "info": {
-    "title": "API de Predicción de Phishing",
-    "description": "API para predecir correos electrónicos de phishing utilizando un modelo ML y análisis de archivos adjuntos.",
-    "version": "1.0.0"
+    "title": "Email Phishing Detection API",
+    "version": "1.0.0",
+    "description": "API para detectar correos electrónicos de phishing usando machine learning y análisis de archivos adjuntos."
   },
   "paths": {
+    "/health": {
+      "get": {
+        "summary": "Verifica el estado de la API",
+        "operationId": "healthCheck",
+        "responses": {
+          "200": {
+            "description": "API en funcionamiento",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "running"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/": {
       "post": {
-        "summary": "Predicción de correos electrónicos de phishing",
-        "description": "Este endpoint recibe datos de un correo electrónico y devuelve una predicción de si el correo es phishing o no, junto con el análisis de archivos adjuntos.",
+        "summary": "Predice si un correo es phishing o no",
         "operationId": "predictEmail",
         "requestBody": {
           "required": true,
@@ -23,49 +46,17 @@
         },
         "responses": {
           "200": {
-            "description": "Predicción exitosa",
+            "description": "Predicción realizada correctamente",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "status": {
-                      "type": "string",
-                      "example": "OK"
-                    },
-                    "predictions": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "model_prediction": {
-                            "type": "object",
-                            "properties": {
-                              "label": {
-                                "type": "string",
-                                "example": "Phishing"
-                              },
-                              "malicious_file": {
-                                "type": "boolean",
-                                "example": false
-                              },
-                              "probability": {
-                                "type": "number",
-                                "format": "float",
-                                "example": 0.95
-                              }
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
+                  "$ref": "#/components/schemas/PredictionResponse"
                 }
               }
             }
           },
-          "500": {
-            "description": "Error en el procesamiento de datos",
+          "429": {
+            "description": "Demasiadas solicitudes (Rate Limit Exceeded)",
             "content": {
               "application/json": {
                 "schema": {
@@ -73,12 +64,15 @@
                   "properties": {
                     "detail": {
                       "type": "string",
-                      "example": "Error al procesar los datos: <mensaje de error>"
+                      "example": "Rate limit exceeded"
                     }
                   }
                 }
               }
             }
+          },
+          "500": {
+            "description": "Error interno del servidor"
           }
         }
       }
@@ -88,76 +82,79 @@
     "schemas": {
       "EmailData": {
         "type": "object",
-        "properties": {
-          "From": {
-            "type": "string",
-            "format": "email",
-            "example": "user@example.com"
-          },
-          "To": {
-            "type": "string",
-            "format": "email",
-            "example": "recipient@example.com"
-          },
-          "Subject": {
-            "type": "string",
-            "example": "Phishing email!"
-          },
-          "Body": {
-            "type": "string",
-            "example": "Click here to get a free iPhone!"
-          },
-          "Date": {
-            "type": "string",
-            "format": "date-time",
-            "example": "2025-02-17T14:30:00Z"
-          },
-          "Concatenated_URLs": {
-            "type": "string",
-            "example": "http://malicious.link http://another.malicious.link"
-          },
-          "Attachments": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "filename": {
-                  "type": "string",
-                  "example": "suspicious_attachment.exe"
-                },
-                "content": {
-                  "type": "string",
-                  "format": "byte",
-                  "example": "BASE64_ENCODED_CONTENT_HERE"
-                }
-              }
-            },
-            "example": [
-              {
-                "filename": "attachment1.pdf",
-                "content": "BASE64_ENCODED_CONTENT_1"
-              },
-              {
-                "filename": "attachment2.jpg",
-                "content": "BASE64_ENCODED_CONTENT_2"
-              }
-            ]
-          }
-        },
         "required": [
           "From",
           "To",
           "Subject",
           "Body",
           "Date"
-        ]
-      }
-    },
-    "securitySchemes": {
-      "apiKey": {
-        "type": "apiKey",
-        "in": "header",
-        "name": "api-key"
+        ],
+        "properties": {
+          "From": {
+            "type": "string",
+            "format": "email"
+          },
+          "To": {
+            "type": "string",
+            "format": "email"
+          },
+          "Subject": {
+            "type": "string"
+          },
+          "Body": {
+            "type": "string"
+          },
+          "Date": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "Concatenated_URLs": {
+            "type": "string",
+            "default": "No Data"
+          },
+          "Attachments": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "byte"
+            }
+          }
+        }
+      },
+      "PredictionResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "example": "OK"
+          },
+          "predictions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "model_prediction": {
+                  "type": "object",
+                  "properties": {
+                    "label": {
+                      "type": "string",
+                      "example": "Phishing"
+                    },
+                    "malicious_file": {
+                      "type": "boolean",
+                      "example": false
+                    },
+                    "probability": {
+                      "type": "number",
+                      "format": "float",
+                      "example": 0.87
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     }
   }
