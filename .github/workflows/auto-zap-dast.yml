@@ -43,7 +43,7 @@ jobs:
         run: |
           until curl -s -o /dev/null -w "%{http_code}" http://localhost:10000/health | grep -q "200"; do
             echo "API no disponible, esperando 30 segundos..."
-            sleep 30
+            sleep 15
           done
           echo "✅ API disponible (Código 200), continuando..."
 
@@ -73,10 +73,9 @@ jobs:
 
       - name: Parse and Output ZAP Alerts
         run: |
-          echo "🛠️ Analizando el reporte ZAP..."
           jq -r '.site[].alerts[] | "🔹 **Alert:** \(.alert)\n   - **Risk:** \(.riskdesc)\n   - **Instances:** \(.count)\n"' zap_report.json | tee zap_summary.md
 
-      - name: 📢 Publicar Reporte en Summary
+      - name: Publicar Reporte en Summary
         run: |
           echo "## 🚨 OWASP ZAP DAST Report 🔍" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
