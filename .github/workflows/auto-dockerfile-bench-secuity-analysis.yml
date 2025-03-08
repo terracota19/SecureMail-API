@@ -39,12 +39,12 @@ jobs:
             docker/docker-bench-security:latest \
             sh -c "./docker-bench-security.sh -i securemail-container" | sed 's/\x1b\[[0-9;]*m//g' >> $GITHUB_STEP_SUMMARY
             echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
-
       - name: Cleanup
         if: always()
         run: |
           docker stop securemail_container || true
           docker rmi securemail:v1.0.0 || true
-     
+          docker rmi docker/docker-bench-security:latest || true
+
      
 
