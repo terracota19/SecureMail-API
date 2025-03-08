@@ -1,7 +1,7 @@
 {
   "openapi": "3.0.0",
   "info": {
-    "title": "Email Phishing Detection API",
+    "title": "SecureMail API",
     "version": "1.0.0",
     "description": "API para detectar correos electrónicos de phishing usando machine learning y análisis de archivos adjuntos."
   },
