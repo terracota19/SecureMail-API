@@ -33,12 +33,6 @@ jobs:
           HYBRID_ANALYSIS_API_URL: ${{ secrets.HYBRID_ANALYSIS_API_URL }}
           ML_MODEL_NAME_URI: ${{ secrets.ML_MODEL_NAME_URI }}
 
-      - name: Debug API and ZAP Logs
-        run: |
-          docker-compose ps
-          docker-compose logs api
-          docker-compose logs zap
-
       - name: Wait for API to be Ready
         run: |
           until curl -s -o /dev/null -w "%{http_code}" http://localhost:10000/health | grep -q "200"; do
@@ -47,17 +41,14 @@ jobs:
           done
           echo "✅ API disponible (Código 200), continuando..."
 
-      - name: Check API availability
-        run: |
-          curl -I http://localhost:10000/openapi.json || exit 1
-
+  
       - name: Run ZAP API Scan
         uses: zaproxy/action-api-scan@v0.9.0
         with:
           target: "http://localhost:10000/openapi.json"
           format: "openapi"
           fail_action: false
-          cmd_options: "-J zap_report.json -r zap_report.html"
+          cmd_options: "-J zap_report.json"
 
       - name: Upload ZAP Report as Artifact (JSON)
         uses: actions/upload-artifact@v4
@@ -65,11 +56,6 @@ jobs:
           name: zap-report-json
           path: zap_report.json
 
-      - name: Upload ZAP Report as Artifact (HTML)
-        uses: actions/upload-artifact@v4
-        with:
-          name: zap-report-html
-          path: zap_report.html
 
       - name: Parse and Output ZAP Alerts
         run: |
@@ -83,7 +69,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**📄 Reportes:**" >> $GITHUB_STEP_SUMMARY
           echo "- [🔗 Reporte JSON](../artifacts/zap-report-json)" >> $GITHUB_STEP_SUMMARY
-          echo "- [🔗 Reporte HTML](../artifacts/zap-report-html)" >> $GITHUB_STEP_SUMMARY
+
 
       - name: Stop and Remove Containers
         if: always()
