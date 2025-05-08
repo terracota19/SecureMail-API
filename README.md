@@ -17,9 +17,13 @@ SecureMail integrates advanced **ML models** including **NLP techniques** and se
 
 ---
 
-## Available Languages
-- [Español](README.es.md)
-- [Português](README.pt.md)
+<details>
+  <summary>Available Languages</summary>
+
+-  <kbd> [Español](README.es.md)</kbd>
+-  <kbd> [Português](README.pt.md)</kbd>
+
+</details>
 
 ---
 
