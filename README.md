@@ -5,8 +5,8 @@ SecureMail integrates advanced **ML models** including **NLP techniques** and se
 
 ---
 
-</details>
-  <summary> Table of Contents</summary>
+<details>
+  <summary>Table of contents</summary>
  
 -  <kbd> [Available Languages](#available-languages)</kbd>
 -  <kbd> [Project Overview](#project-overview)</kbd>
