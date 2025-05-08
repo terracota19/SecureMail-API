@@ -5,15 +5,19 @@ SecureMail integrates advanced **ML models** including **NLP techniques** and se
 
 ---
 
-## Table of Contents
-- [Available Languages](#available-languages)
-- [Project Overview](#project-overview)
-- [Development Phase](#development-phase)
-- [CI/CD Phase](#cicd-phase)
-- [Production Phase](#production-phase)
-- [Design and Architecture](#design-and-architecture)
-- [Future Enhancements](#future-enhancements)
-- [License](#license)
+</details>
+  <summary> Table of Contents</summary>
+ 
+-  <kbd> [Available Languages](#available-languages)</kbd>
+-  <kbd> [Project Overview](#project-overview)</kbd>
+-  <kbd> [Development Phase](#development-phase)</kbd>
+-  <kbd> [CI/CD Phase](#cicd-phase)</kbd>
+-  <kbd> [Production Phase](#production-phase)</kbd>
+-  <kbd> [Design and Architecture](#design-and-architecture)</kbd>
+-  <kbd> [Future Enhancements](#future-enhancements)</kbd>
+-  <kbd> [License](#license)</kbd>
+
+</details>
 
 ---
 
