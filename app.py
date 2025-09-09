@@ -18,31 +18,48 @@ from fastapi import FastAPI, HTTPException, Request
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 
-# Cargar variables de entorno y modelo
+# Load environment variables and model
 load_dotenv()
 app = FastAPI()
- 
-# Configuración de `slowapi` para limitar solicitudes
-limiter = Limiter(key_func = get_remote_address)
+
+# CORS configuration
+# Allowing only the specific origins for your add-ons
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://terracota19.github.io",
+        "https://outlook.office.com",
+        "https://outlook.live.com",
+        "https://outlook.office365.com",
+        "https://outlook.office.com"
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# `slowapi` configuration to limit requests
+limiter = Limiter(key_func=get_remote_address)
 app.state.limiter = limiter
 
-# Configuración de DistilBERT
+# DistilBERT configuration
 tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-uncased')
 model_bert = DistilBertModel.from_pretrained('distilbert-base-uncased')
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 model_bert.to(device)
 
-# Variables de entorno
+# Environment variables
 HYBRID_ANALYSIS_API_KEY = os.getenv("HYBRID_ANALYSIS_API_KEY")
 HYBRID_ANALYSIS_API_URL = os.getenv("HYBRID_ANALYSIS_API_URL")
 ML_MODEL_NAME_URI = os.getenv("ML_MODEL_NAME_URI")
 
-model = joblib.load("XGBoost.pkl") 
+model = joblib.load("XGBoost.pkl")
 
 
-#Validación de datos de entrada de usuario
+# Input data validation
 class EmailData(BaseModel):
     From: EmailStr
     To: EmailStr
@@ -50,7 +67,7 @@ class EmailData(BaseModel):
     Body: str
     Date: str
     Concatenated_URLs: Optional[str] = "No Data"
-    Attachments: Optional[List[dict]] 
+    Attachments: Optional[List[dict]]
 
 
 def process_urls(urls):
@@ -108,8 +125,8 @@ def preprocess_additional_features(data):
     return processed_data
 
 def convert_to_float(obj):
-    if isinstance(obj, np.generic):  
-        return obj.item()  
+    if isinstance(obj, np.generic):
+        return obj.item()
     return obj
 
 def generate_distilbert_embeddings(texts, tokenizer, model, max_length=512, batch_size=8):
@@ -131,25 +148,24 @@ def validate_base64_file(attachment: str) -> bool:
         file_data = base64.b64decode(attachment, validate=True)
         kind = filetype.guess(file_data)
         if kind is None:
-            return False        
+            return False
         mime_type = kind.mime
         allowed_mime_types = {"application/pdf", "image/png", "image/jpeg", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
         return mime_type in allowed_mime_types
     except (binascii.Error, ValueError):
         return False
-    
+
 async def analyze_attachment(attachment: str):
     try:
-        #validate input str: attachment
         if not validate_base64_file(attachment) and isinstance(attachment, str):
             return {"verdict": "rejected", "detail": "Archivo no permitido o inválido"}
-        
+
         file_data = base64.b64decode(attachment)
 
         async with aiohttp.ClientSession() as session:
             form_data = aiohttp.FormData()
             form_data.add_field("file", file_data, filename="attachment", content_type="application/octet-stream")
-            form_data.add_field("environment_id", "160")  
+            form_data.add_field("environment_id", "160")
 
             async with session.post(
                 f"{HYBRID_ANALYSIS_API_URL}/submit/file",
@@ -160,15 +176,13 @@ async def analyze_attachment(attachment: str):
                     response_json = await response.json()
                     sha256 = response_json.get("sha256")
 
-                    #Check whether given sha256 string is a SHA256 and a str
                     if sha256 and isinstance(sha256, str) and re.fullmatch(r"^[a-fA-F0-9]{64}$", sha256) is not None:
                         summary_url = f"{HYBRID_ANALYSIS_API_URL}/report/{sha256}:160/summary"
                         async with session.get(
                             summary_url,
                             headers={"accept": "application/json", "api-key": HYBRID_ANALYSIS_API_KEY}
                         ) as summary_response:
-                            #Check if summary_response of API is an Integer
-                            if isinstance(summary_response, int) and summary_response.status == 200:
+                            if summary_response.status == 200:
                                 return await summary_response.json()
                             else:
                                 return {
@@ -187,17 +201,16 @@ async def analyze_attachment(attachment: str):
 @app.get("/openapi.json")
 def get_openapi():
     return JSONResponse(content=app.openapi())
- 
+
 @app.get("/health")
 async def health_check():
     return {"status": "running"}
 
-# Endpoint Principal -- Limitar a 5 por minuto para evitar ataques de denegación de servicio DDOS O DOS con slowapi.limiter.
+# Main endpoint -- Limit to 5 per minute to prevent DDOS or DOS attacks with slowapi.limiter.
 @app.post("/")
 @limiter.limit("5 per minute")
 async def predict_emails(email: EmailData, request: Request):
     try:
-        
         additional_features = preprocess_additional_features(pd.DataFrame([email.dict()]))
         urls_features = process_urls(email.Concatenated_URLs)
         text_data = [" ".join([email.Subject, email.Body])]
@@ -206,13 +219,13 @@ async def predict_emails(email: EmailData, request: Request):
         pred_prob = model.predict_proba(X_combined)[0]
         pred_label = model.predict(X_combined)[0]
         attachment_results = []
-        malicious_attachments = False  
+        malicious_attachments = False
 
-        if email.Attachments != ["No Data"]:
+        if email.Attachments:
             for attachment in email.Attachments:
                 analysis = await analyze_attachment(attachment)
                 attachment_results.append(analysis)
-
+            
             malicious_attachments = any(
                 result.get("verdict") == "malicious" for result in attachment_results if "verdict" in result
             )
@@ -223,7 +236,7 @@ async def predict_emails(email: EmailData, request: Request):
         )
 
         prediction = [{
-            "model_prediction": {"label": ml_verdict, "malicious_file" : malicious_attachments , "probability": convert_to_float(pred_prob[1])}
+            "model_prediction": {"label": ml_verdict, "malicious_file": malicious_attachments, "probability": convert_to_float(pred_prob[1])}
         }]
 
         return {"status": "OK", "predictions": prediction}
