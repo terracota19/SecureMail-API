@@ -14,6 +14,7 @@ COPY XGBoost.pkl .
 RUN mkdir -p /secure.mail/cache && chown -R appuser:appgroup /secure.mail
 ENV HF_HOME=/secure.mail/cache
 USER appuser
-EXPOSE 10000
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "10000"]
+EXPOSE 8080
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8080"]
+
 
