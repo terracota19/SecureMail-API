@@ -1,0 +1,36 @@
+{
+    "best_policy_name": "P_min_95_R_min_95",
+    "final_threshold": 0.999663141048162,
+    "metrics_at_final_threshold": {
+        "threshold": 0.999663141048162,
+        "Precision": 0.9834921821466392,
+        "Recall": 0.950054158141774,
+        "F1-Score": 0.9664840378317162
+    },
+    "all_policy_metrics": {
+        "P_min_90_R_min_90": {
+            "threshold": 0.9999998940431519,
+            "Precision": 0.9917777335720442,
+            "Recall": 0.9000481405704658,
+            "F1-Score": 0.9436890753651535
+        },
+        "P_min_95_R_min_95": {
+            "threshold": 0.999663141048162,
+            "Precision": 0.9834921821466392,
+            "Recall": 0.950054158141774,
+            "F1-Score": 0.9664840378317162
+        },
+        "P_min_98_R_min_98": {
+            "threshold": null,
+            "Precision": 0.0,
+            "Recall": 0.0,
+            "F1-Score": 0.0
+        },
+        "P_min_99_R_min_99": {
+            "threshold": null,
+            "Precision": 0.0,
+            "Recall": 0.0,
+            "F1-Score": 0.0
+        }
+    }
+}
