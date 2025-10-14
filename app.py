@@ -1,32 +1,41 @@
 import os
 import re
 import base64
-import filetype
-import aiohttp
 import joblib
 import numpy as np
 import torch
-import binascii
 import pandas as pd
+import json
 from dotenv import load_dotenv
 from urllib.parse import urlparse
-from transformers import DistilBertTokenizer, DistilBertModel
-from sklearn.preprocessing import StandardScaler
+from transformers import BertTokenizer, BertModel
 from typing import Optional, List
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from fastapi import FastAPI, HTTPException, Request
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+# import binascii # YA NO ES NECESARIO
+# import filetype # YA NO ES NECESARIO
 
+# =============================================================================
+# 0. CONFIGURACIÓN Y ARTEFACTOS
+# =============================================================================
 
-# Load environment variables and model
+BERT_MODEL_NAME = 'bert-base-uncased'
+MAX_LENGTH = 128
+METRICS_PATH = './Metrics/validation_metrics.json'
+
+UMBRAL_OPTIMO = None
+MODEL = None
+SCALER = None
+TOKENIZER = None
+MODEL_BERT = None
+
 load_dotenv()
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 app = FastAPI()
 
-# CORS configuration
-# Allowing only the specific origins for your add-ons
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -41,205 +50,185 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# `slowapi` configuration to limit requests
-limiter = Limiter(key_func=get_remote_address)
-app.state.limiter = limiter
+def load_ml_artifacts():
+    global MODEL, SCALER, TOKENIZER, MODEL_BERT, UMBRAL_OPTIMO
+    
+    try:
+        if os.path.exists(METRICS_PATH):
+            with open(METRICS_PATH, 'r') as f:
+                metrics = json.load(f)
+            UMBRAL_OPTIMO = metrics.get("final_threshold")
+            if UMBRAL_OPTIMO is None:
+                UMBRAL_OPTIMO = 0.5
+        else:
+            UMBRAL_OPTIMO = 0.5
 
-# DistilBERT configuration
-tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-uncased')
-model_bert = DistilBertModel.from_pretrained('distilbert-base-uncased')
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model_bert.to(device)
+        MODEL = joblib.load("./models/best_phishing_model.joblib")
+        SCALER = joblib.load("./objects/feature_scaler.joblib")
+        TOKENIZER = BertTokenizer.from_pretrained(BERT_MODEL_NAME)
+        MODEL_BERT = BertModel.from_pretrained(BERT_MODEL_NAME).to(device)
+        MODEL_BERT.eval()
+        
+    except Exception as e:
+        print(f"ERROR CRÍTICO al cargar artefactos de ML: {e}")
 
-# Environment variables
-HYBRID_ANALYSIS_API_KEY = os.getenv("HYBRID_ANALYSIS_API_KEY")
-HYBRID_ANALYSIS_API_URL = os.getenv("HYBRID_ANALYSIS_API_URL")
-ML_MODEL_NAME_URI = os.getenv("ML_MODEL_NAME_URI")
-
-model = joblib.load("XGBoost.pkl")
+load_ml_artifacts()
 
 
-# Input data validation
+# =============================================================================
+# 1. MODELOS DE DATOS (FastAPI/Pydantic)
+# =============================================================================
+
+# ELIMINADO: class Attachment(BaseModel):
+    
 class EmailData(BaseModel):
-    From: EmailStr
-    To: EmailStr
+    From: str
+    To: str
     Subject: str
     Body: str
+    MessageId: str
     Date: str
-    Concatenated_URLs: Optional[str] = "No Data"
-    Attachments: Optional[List[dict]]
+    Concatenated_URLs: str
+    # ELIMINADO: Attachments: List[Attachment]
 
 
-def process_urls(urls):
-    if urls == "No Data" or not isinstance(urls, str):
-        return pd.Series({
-            'domain_length_avg': 0,
-            'url_length_avg': 0,
-            'subdomains_avg': 0,
-            'is_https_avg': 0,
-            'total_urls': 0,
-        })
+# =============================================================================
+# 2. FUNCIONES DE PREPROCESAMIENTO (REPLICANDO JUPYTER)
+# =============================================================================
 
-    url_list = urls.split()
-    domain_lengths, url_lengths, subdomains, https_indicators = [], [], [], []
+def convert_to_float(value):
+    return float(value)
 
-    for single_url in url_list:
-        try:
-            parsed = urlparse(single_url)
-            domain = parsed.netloc
-            domain_lengths.append(len(domain))
-            url_lengths.append(len(single_url))
-            subdomains.append(domain.count('.'))
-            https_indicators.append(1 if parsed.scheme == 'https' else 0)
-        except Exception:
-            continue
-
-    return pd.Series({
-        'domain_length_avg': np.mean(domain_lengths) if domain_lengths else 0,
-        'url_length_avg': np.mean(url_lengths) if url_lengths else 0,
-        'subdomains_avg': np.mean(subdomains) if subdomains else 0,
-        'is_https_avg': np.mean(https_indicators) if https_indicators else 0,
-        'total_urls': len(url_list),
-    })
-
-def encode_frequency(data, cols):
-    for col in cols:
-        freq = data[col].value_counts(normalize=True)
-        data[col] = data[col].map(freq)
-    return data
-
-def extract_time_features(data):
-    data['Date'] = pd.to_datetime(data['Date'], errors='coerce', utc=True)
-    data['Month'] = data['Date'].dt.month
-    data['Hour'] = data['Date'].dt.hour
-    data['DayOfWeek'] = data['Date'].dt.dayofweek
-    data = data.drop(columns=['Date'])
-    return data
-
-def preprocess_additional_features(data):
-    data = encode_frequency(data, ['From', 'To'])
-    data = extract_time_features(data)
-    processed_data = data[['From', 'To', 'Month', 'Hour', 'DayOfWeek']]
-    scaler = StandardScaler()
-    processed_data = scaler.fit_transform(processed_data)
-    return processed_data
-
-def convert_to_float(obj):
-    if isinstance(obj, np.generic):
-        return obj.item()
-    return obj
-
-def generate_distilbert_embeddings(texts, tokenizer, model, max_length=512, batch_size=8):
-    model.eval()
-    embeddings = []
+def generate_bert_embeddings(text: str, tokenizer: BertTokenizer, model_bert: BertModel, max_length: int = MAX_LENGTH, device: torch.device = device) -> np.ndarray:
+    if model_bert is None or tokenizer is None:
+        raise RuntimeError("BERT Model/Tokenizer not loaded.")
+        
+    encoding = tokenizer.encode_plus(
+        text,
+        add_special_tokens=True,
+        max_length=max_length,
+        padding='max_length',
+        truncation=True,
+        return_tensors='pt'
+    )
+    
+    input_ids = encoding['input_ids'].to(device)
+    attention_mask = encoding['attention_mask'].to(device)
+    
     with torch.no_grad():
-        for i in range(0, len(texts), batch_size):
-            batch = texts[i:i + batch_size]
-            encoded = tokenizer(batch, padding=True, truncation=True, max_length=max_length, return_tensors='pt')
-            encoded = {k: v.to(device) for k, v in encoded.items()}
-            outputs = model(**encoded)
-            cls_embeddings = outputs.last_hidden_state[:, 0, :].cpu()
-            embeddings.append(cls_embeddings.numpy())
-            torch.cuda.empty_cache()
-    return np.vstack(embeddings)
+        output = model_bert(input_ids=input_ids, attention_mask=attention_mask)
+        
+    cls_embedding = output.last_hidden_state[:, 0, :].cpu().numpy()
+    
+    return cls_embedding.flatten()
 
-def validate_base64_file(attachment: str) -> bool:
-    try:
-        file_data = base64.b64decode(attachment, validate=True)
-        kind = filetype.guess(file_data)
-        if kind is None:
-            return False
-        mime_type = kind.mime
-        allowed_mime_types = {"application/pdf", "image/png", "image/jpeg", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
-        return mime_type in allowed_mime_types
-    except (binascii.Error, ValueError):
-        return False
+def extract_url_features(body_text: str) -> np.ndarray:
+    
+    url_pattern = r'\bhttps?://[\w.-]+(?:\/[\w./?%&=-]*)?\b'
+    urls = re.findall(url_pattern, body_text)
+    
+    n_urls = len(urls)
+    ip_pattern = r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}'
+    has_ip_in_url = 1 if any(re.search(ip_pattern, urlparse(url).netloc) for url in urls) else 0
 
-async def analyze_attachment(attachment: str):
-    try:
-        if not validate_base64_file(attachment) and isinstance(attachment, str):
-            return {"verdict": "rejected", "detail": "Archivo no permitido o inválido"}
+    features = np.array([
+        n_urls, 
+        has_ip_in_url,
+    ])
+    
+    return features
 
-        file_data = base64.b64decode(attachment)
+def calculate_text_features(subject: str, body: str, n_attachments: int = 0) -> np.ndarray:
+    
+    full_text = f"{subject} {body}"
+    
+    len_subject = len(subject)
+    len_body = len(body)
+    len_full_text = len(full_text)
+    
+    n_at = full_text.count('@')
+    n_html_tags = len(re.findall(r'<.*?>', body))
 
-        async with aiohttp.ClientSession() as session:
-            form_data = aiohttp.FormData()
-            form_data.add_field("file", file_data, filename="attachment", content_type="application/octet-stream")
-            form_data.add_field("environment_id", "160")
+    n_attachments_feature = n_attachments # SE MANTIENE A CERO
 
-            async with session.post(
-                f"{HYBRID_ANALYSIS_API_URL}/submit/file",
-                headers={"accept": "application/json", "api-key": HYBRID_ANALYSIS_API_KEY},
-                data=form_data
-            ) as response:
-                if response.status == 201:
-                    response_json = await response.json()
-                    sha256 = response_json.get("sha256")
-
-                    if sha256 and isinstance(sha256, str) and re.fullmatch(r"^[a-fA-F0-9]{64}$", sha256) is not None:
-                        summary_url = f"{HYBRID_ANALYSIS_API_URL}/report/{sha256}:160/summary"
-                        async with session.get(
-                            summary_url,
-                            headers={"accept": "application/json", "api-key": HYBRID_ANALYSIS_API_KEY}
-                        ) as summary_response:
-                            if summary_response.status == 200:
-                                return await summary_response.json()
-                            else:
-                                return {
-                                    "verdict": "unknown",
-                                    "detail": f"Failed to retrieve summary: {summary_response.status}"
-                                }
-                    else:
-                        return {"verdict": "unknown", "detail": "Failed to retrieve analysis ID"}
-                else:
-                    return {"verdict": "unknown", "detail": f"Failed to submit file: {response.status}"}
-
-    except Exception as e:
-        return {"verdict": "unknown", "detail": str(e)}
+    # Nota: si el feature de n_attachments ya no se usa en el entrenamiento, se debe eliminar de aquí y del SCALER
+    features = np.array([
+        len_subject,
+        len_body,
+        len_full_text,
+        n_at,
+        n_html_tags,
+        n_attachments_feature, # MANTENER si está en el SCALER, sino, ELIMINAR
+    ])
+    
+    return features
 
 
-@app.get("/openapi.json")
-def get_openapi():
-    return JSONResponse(content=app.openapi())
+# =============================================================================
+# 3. LÓGICA DE INFERENCIA DE ADJUNTOS (ELIMINADO)
+# =============================================================================
+# ELIMINADO: async def analyze_attachment(attachment: Attachment):
 
-@app.get("/health")
-async def health_check():
-    return {"status": "running"}
 
-# Main endpoint -- Limit to 5 per minute to prevent DDOS or DOS attacks with slowapi.limiter.
+# =============================================================================
+# 4. ENDPOINT PRINCIPAL
+# =============================================================================
+
 @app.post("/")
-@limiter.limit("5 per minute")
-async def predict_emails(email: EmailData, request: Request):
+async def predict_phishing(email: EmailData, request: Request):
+    if MODEL is None or SCALER is None or MODEL_BERT is None or UMBRAL_OPTIMO is None:
+        raise HTTPException(status_code=503, detail="ML service is initializing or failed to load critical components.")
+        
     try:
-        additional_features = preprocess_additional_features(pd.DataFrame([email.dict()]))
-        urls_features = process_urls(email.Concatenated_URLs)
-        text_data = [" ".join([email.Subject, email.Body])]
-        text_embeddings = generate_distilbert_embeddings(text_data, tokenizer, model_bert)
-        X_combined = np.hstack([text_embeddings, additional_features, urls_features.values.reshape(1, -1)])
-        pred_prob = model.predict_proba(X_combined)[0]
-        pred_label = model.predict(X_combined)[0]
-        attachment_results = []
-        malicious_attachments = False
+        # ASUMIENDO que n_attachments = 0 (ya no se reciben adjuntos)
+        n_attachments = 0 
+        
+        X_text_features = calculate_text_features(email.Subject, email.Body, n_attachments)
+        X_url_features = extract_url_features(email.Body)
 
-        if email.Attachments:
-            for attachment in email.Attachments:
-                analysis = await analyze_attachment(attachment)
-                attachment_results.append(analysis)
-            
-            malicious_attachments = any(
-                result.get("verdict") == "malicious" for result in attachment_results if "verdict" in result
-            )
+        # 1. Combinar Features Adicionales (Numéricas)
+        X_additional = np.hstack([X_text_features, X_url_features])
+        
+        # 2. Escalado de Features Adicionales
+        X_additional_scaled = SCALER.transform(X_additional.reshape(1, -1))
+        
+        # 3. Generación de Embeddings BERT
+        text_for_bert = " ".join([email.Subject, email.Body])
+        X_bert_embeddings = generate_bert_embeddings(text_for_bert, TOKENIZER, MODEL_BERT)
+        
+        # 4. Combinación Final
+        X_combined = np.hstack([X_bert_embeddings.reshape(1, -1), X_additional_scaled])
+        
+        # 5. Predicción del Modelo Final
+        pred_prob = MODEL.predict_proba(X_combined)[0]
+        prob_phishing = pred_prob[1]
 
+        # 6. Aplicación de la Política de Umbral
         ml_verdict = (
-            "Phishing" if pred_label == 1 else
-            "Not Phishing"
+            "Phishing" if prob_phishing >= UMBRAL_OPTIMO else
+            "Safe"
         )
+        
+        # 7. Análisis de Adjuntos (Simplificado)
+        # La bandera de 'malicious_file' debe ser False ya que no se analizan adjuntos.
+        malicious_attachments = False 
 
+        # 8. Retorno de la Respuesta (Formato Apps Script)
         prediction = [{
-            "model_prediction": {"label": ml_verdict, "malicious_file": malicious_attachments, "probability": convert_to_float(pred_prob[1])}
+            "model_prediction": {
+                "label": ml_verdict, 
+                "malicious_file": malicious_attachments, 
+                "probability": convert_to_float(prob_phishing)
+            }
         }]
 
         return {"status": "OK", "predictions": prediction}
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al procesar los datos: {str(e)}")
+        return JSONResponse(status_code=500, content={"status": "ERROR", "message": f"Error interno del servidor: {e}"})
+
+@app.get("/health")
+def read_root():
+    if MODEL is None or SCALER is None or MODEL_BERT is None:
+        raise HTTPException(status_code=503, detail="ML service failed to load.")
+    return {"message": "SecureMail-API está operativa y saludable."}

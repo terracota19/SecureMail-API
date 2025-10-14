@@ -1,4 +1,4 @@
-aiohttp
+#aiohttp
 fastapi
 joblib
 numpy
@@ -12,4 +12,6 @@ transformers
 uvicorn
 xgboost
 pydantic[email]
-filetype
+#filetype
+lightgbm
+scikit-learn

@@ -15,14 +15,16 @@ ENV HF_HOME=/secure.mail/cache
 
 USER appuser
 
-RUN python -c "from transformers import DistilBertTokenizer, DistilBertModel; DistilBertTokenizer.from_pretrained('distilbert-base-uncased'); DistilBertModel.from_pretrained('distilbert-base-uncased')"
+RUN python -c "from transformers import BertTokenizer, BertModel; BertTokenizer.from_pretrained('bert-base-uncased'); BertModel.from_pretrained('bert-base-uncased')"
 
 USER root
 
 COPY app.py .
-COPY XGBoost.pkl .
+COPY models/ ./models/
+COPY objects/ ./objects/
+COPY Metrics/ ./Metrics/
 
 RUN chown -R appuser:appgroup /secure.mail
 USER appuser
-EXPOSE 10000
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "10000"]
+EXPOSE 8000
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
