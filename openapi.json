@@ -1,174 +1,119 @@
-{
-  "openapi": "3.0.0",
-  "info": {
-    "title": "SecureMail API",
-    "version": "1.0.0",
-    "description": "API para detectar correos electrónicos de phishing usando machine learning."
-  },
-  "paths": {
-    "/": {
-      "get": {
-        "summary": "Verifica el estado inicial de la API",
-        "operationId": "rootCheck",
-        "responses": {
-          "200": {
-            "description": "API en funcionamiento",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "status": {
-                      "type": "string",
-                      "example": "OK"
-                    },
-                    "message": {
-                      "type": "string",
-                      "example": "Phishing Detection API running."
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/predict": {
-      "post": {
-        "summary": "Predice si un correo es phishing o no",
-        "operationId": "predictEmail",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/EmailData"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Predicción realizada correctamente",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PredictionResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Error interno del servidor",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "status": {
-                      "type": "string",
-                      "example": "ERROR"
-                    },
-                    "message": {
-                      "type": "string",
-                      "example": "Error interno del servidor: <exception_details>"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  },
-  "components": {
-    "schemas": {
-      "EmailData": {
-        "type": "object",
-        "required": [
-          "From",
-          "To",
-          "Subject",
-          "Body",
-          "Date",
-          "Concatenated_URLs",
-          "MessageId"
-        ],
-        "properties": {
-          "From": {
-            "type": "string",
-            "description": "Dirección de correo del remitente.",
-            "example": "sender@company.com"
-          },
-          "To": {
-            "type": "string",
-            "description": "Dirección de correo del destinatario.",
-            "example": "recipient@company.com"
-          },
-          "Subject": {
-            "type": "string",
-            "description": "Asunto del correo."
-          },
-          "Body": {
-            "type": "string",
-            "description": "Cuerpo del correo (texto plano)."
-          },
-          "Date": {
-            "type": "string",
-            "format": "date-time",
-            "description": "Fecha y hora del correo en formato ISO 8601 (ej. 2025-10-15T10:00:00Z)."
-          },
-          "MessageId": {
-            "type": "string",
-            "description": "ID único del mensaje de Gmail."
-          },
-          "Concatenated_URLs": {
-            "type": "string",
-            "description": "URLs extraídas del cuerpo del mensaje, concatenadas por espacio.",
-            "default": "No Data"
-          }
-        }
-      },
-      "PredictionResponse": {
-        "type": "object",
-        "properties": {
-          "status": {
-            "type": "string",
-            "example": "OK"
-          },
-          "predictions": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "model_prediction": {
-                  "type": "object",
-                  "properties": {
-                    "label": {
-                      "type": "string",
-                      "description": "Veredicto: 'Phishing' o 'Safe'.",
-                      "example": "Phishing"
-                    },
-                    "malicious_file": {
-                      "type": "boolean",
-                      "description": "Indica si se detectaron adjuntos maliciosos (fijado a 'false' en esta versión).",
-                      "example": false
-                    },
-                    "probability": {
-                      "type": "number",
-                      "format": "float",
-                      "description": "Probabilidad del modelo de que el correo sea Phishing (clase 1).",
-                      "example": 0.9997
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-}
+openapi: 3.0.0
+info:
+  title: SecureMail API
+  version: 1.0.0
+  description: API para detectar correos electrónicos de phishing usando machine learning.
+paths:
+  /health:
+    get:
+      summary: Verifica el estado inicial de la API
+      operationId: rootCheck
+      responses:
+        '200':
+          description: API en funcionamiento
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: OK
+                  message:
+                    type: string
+                    example: Phishing Detection API running.
+  /predict:
+    post:
+      summary: Predice si un correo es phishing o no
+      operationId: predictEmail
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailData'
+      responses:
+        '200':
+          description: Predicción realizada correctamente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PredictionResponse'
+        '500':
+          description: Error interno del servidor
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ERROR
+                  message:
+                    type: string
+                    example: 'Error interno del servidor: <exception_details>'
+components:
+  schemas:
+    EmailData:
+      type: object
+      required:
+        - From
+        - To
+        - Subject
+        - Body
+        - Date
+        - Concatenated_URLs
+        - MessageId
+      properties:
+        From:
+          type: string
+          description: Dirección de correo del remitente.
+          example: sender@company.com
+        To:
+          type: string
+          description: Dirección de correo del destinatario.
+          example: recipient@company.com
+        Subject:
+          type: string
+          description: Asunto del correo.
+        Body:
+          type: string
+          description: Cuerpo del correo (texto plano).
+        Date:
+          type: string
+          format: date-time
+          description: Fecha y hora del correo en formato ISO 8601 (ej. 2025-10-15T10:00:00Z).
+        MessageId:
+          type: string
+          description: ID único del mensaje de Gmail.
+        Concatenated_URLs:
+          type: string
+          description: URLs extraídas del cuerpo del mensaje, concatenadas por espacio.
+          default: No Data
+    PredictionResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: OK
+        predictions:
+          type: array
+          items:
+            type: object
+            properties:
+              model_prediction:
+                type: object
+                properties:
+                  label:
+                    type: string
+                    description: 'Veredicto: ''Phishing'' o ''Safe''.'
+                    example: Phishing
+                  malicious_file:
+                    type: boolean
+                    description: Indica si se detectaron adjuntos maliciosos (fijado a 'false' en esta versión).
+                    example: false
+                  probability:
+                    type: number
+                    format: float
+                    description: Probabilidad del modelo de que el correo sea Phishing (clase 1).
+                    example: 0.9997
