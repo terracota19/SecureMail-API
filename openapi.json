@@ -3,13 +3,13 @@
   "info": {
     "title": "SecureMail API",
     "version": "1.0.0",
-    "description": "API para detectar correos electrónicos de phishing usando machine learning y análisis de archivos adjuntos."
+    "description": "API para detectar correos electrónicos de phishing usando machine learning."
   },
   "paths": {
-    "/health": {
+    "/": {
       "get": {
-        "summary": "Verifica el estado de la API",
-        "operationId": "healthCheck",
+        "summary": "Verifica el estado inicial de la API",
+        "operationId": "rootCheck",
         "responses": {
           "200": {
             "description": "API en funcionamiento",
@@ -20,7 +20,11 @@
                   "properties": {
                     "status": {
                       "type": "string",
-                      "example": "running"
+                      "example": "OK"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Phishing Detection API running."
                     }
                   }
                 }
@@ -30,7 +34,7 @@
         }
       }
     },
-    "/": {
+    "/predict": {
       "post": {
         "summary": "Predice si un correo es phishing o no",
         "operationId": "predictEmail",
@@ -55,24 +59,25 @@
               }
             }
           },
-          "429": {
-            "description": "Demasiadas solicitudes (Rate Limit Exceeded)",
+          "500": {
+            "description": "Error interno del servidor",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "detail": {
+                    "status": {
                       "type": "string",
-                      "example": "Rate limit exceeded"
+                      "example": "ERROR"
+                    },
+                    "message": {
+                      "type": "string",
+                      "example": "Error interno del servidor: <exception_details>"
                     }
                   }
                 }
               }
             }
-          },
-          "500": {
-            "description": "Error interno del servidor"
           }
         }
       }
@@ -87,37 +92,42 @@
           "To",
           "Subject",
           "Body",
-          "Date"
+          "Date",
+          "Concatenated_URLs",
+          "MessageId"
         ],
         "properties": {
           "From": {
             "type": "string",
-            "format": "email"
+            "description": "Dirección de correo del remitente.",
+            "example": "sender@company.com"
           },
           "To": {
             "type": "string",
-            "format": "email"
+            "description": "Dirección de correo del destinatario.",
+            "example": "recipient@company.com"
           },
           "Subject": {
-            "type": "string"
+            "type": "string",
+            "description": "Asunto del correo."
           },
           "Body": {
-            "type": "string"
+            "type": "string",
+            "description": "Cuerpo del correo (texto plano)."
           },
           "Date": {
             "type": "string",
-            "format": "date-time"
+            "format": "date-time",
+            "description": "Fecha y hora del correo en formato ISO 8601 (ej. 2025-10-15T10:00:00Z)."
+          },
+          "MessageId": {
+            "type": "string",
+            "description": "ID único del mensaje de Gmail."
           },
           "Concatenated_URLs": {
             "type": "string",
+            "description": "URLs extraídas del cuerpo del mensaje, concatenadas por espacio.",
             "default": "No Data"
-          },
-          "Attachments": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "format": "byte"
-            }
           }
         }
       },
@@ -138,16 +148,19 @@
                   "properties": {
                     "label": {
                       "type": "string",
+                      "description": "Veredicto: 'Phishing' o 'Safe'.",
                       "example": "Phishing"
                     },
                     "malicious_file": {
                       "type": "boolean",
+                      "description": "Indica si se detectaron adjuntos maliciosos (fijado a 'false' en esta versión).",
                       "example": false
                     },
                     "probability": {
                       "type": "number",
                       "format": "float",
-                      "example": 0.87
+                      "description": "Probabilidad del modelo de que el correo sea Phishing (clase 1).",
+                      "example": 0.9997
                     }
                   }
                 }
