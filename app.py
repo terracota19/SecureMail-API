@@ -1,219 +1,247 @@
-import os
-import re
-import base64
 import joblib
 import numpy as np
 import torch
 import pandas as pd
-import json
+import json 
 from dotenv import load_dotenv
-from urllib.parse import urlparse
+from urllib.parse import urlparse 
 from transformers import BertTokenizer, BertModel
-from typing import Optional, List
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-# import binascii # YA NO ES NECESARIO
-# import filetype # YA NO ES NECESARIO
+from torch.cuda.amp import autocast # Necesario para compatibilidad BERT
+from datetime import datetime
+from typing import Dict, Any, Union 
 
 # =============================================================================
-# 0. CONFIGURACIÓN Y ARTEFACTOS
+# 0. CONFIGURACIÓN Y ARTEFACTOS 
 # =============================================================================
 
-BERT_MODEL_NAME = 'bert-base-uncased'
-MAX_LENGTH = 128
-METRICS_PATH = './Metrics/validation_metrics.json'
+# Constantes de BERT
+BERT_MODEL_NAME = 'bert-base-uncased' 
+MAX_LENGTH = 128 
+EMBEDDING_DIM = 768 # 768 features
 
-UMBRAL_OPTIMO = None
-MODEL = None
-SCALER = None
-TOKENIZER = None
-MODEL_BERT = None
+# Rutas de Artefactos 
+MODEL_PATH = './models/best_phishing_model.joblib'
+SCALER_PATH = './objects/feature_scaler.joblib'
+ENCODER_PATH = './objects/label_encoders.joblib' 
+METRICS_PATH_VALIDATION = './Metrics/validation_metrics.json'
 
+# Variables Globales (se inicializan en load_ml_artifacts)
+UMBRAL_OPTIMO: Union[float, None] = None
+MODEL: Any = None
+SCALER: Any = None
+LABEL_ENCODERS: Dict = {}
+TOKENIZER: Any = None
+MODEL_BERT: Any = None
+
+# Carga de variables de entorno (si las hubiera)
 load_dotenv()
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') 
 
-app = FastAPI()
+app = FastAPI(title="SecureMail Phishing Detection API", version="1.0.0")
 
+# Configuración CORS para el Complemento de Gmail
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://terracota19.github.io",
-        "https://outlook.office.com",
-        "https://outlook.live.com",
-        "https://outlook.office365.com",
-        "https://outlook.office.com"
-    ],
+    allow_origins=["*"], # Permitir todos los orígenes para el desarrollo con ngrok
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-def load_ml_artifacts():
-    global MODEL, SCALER, TOKENIZER, MODEL_BERT, UMBRAL_OPTIMO
-    
-    try:
-        if os.path.exists(METRICS_PATH):
-            with open(METRICS_PATH, 'r') as f:
-                metrics = json.load(f)
-            UMBRAL_OPTIMO = metrics.get("final_threshold")
-            if UMBRAL_OPTIMO is None:
-                UMBRAL_OPTIMO = 0.5
-        else:
-            UMBRAL_OPTIMO = 0.5
-
-        MODEL = joblib.load("./models/best_phishing_model.joblib")
-        SCALER = joblib.load("./objects/feature_scaler.joblib")
-        TOKENIZER = BertTokenizer.from_pretrained(BERT_MODEL_NAME)
-        MODEL_BERT = BertModel.from_pretrained(BERT_MODEL_NAME).to(device)
-        MODEL_BERT.eval()
-        
-    except Exception as e:
-        print(f"ERROR CRÍTICO al cargar artefactos de ML: {e}")
-
-load_ml_artifacts()
-
 
 # =============================================================================
-# 1. MODELOS DE DATOS (FastAPI/Pydantic)
+# 1. MODELOS DE DATOS Y UTILIDADES
 # =============================================================================
 
-# ELIMINADO: class Attachment(BaseModel):
-    
 class EmailData(BaseModel):
-    From: str
-    To: str
-    Subject: str
-    Body: str
-    MessageId: str
-    Date: str
-    Concatenated_URLs: str
-    # ELIMINADO: Attachments: List[Attachment]
+    """Esquema de datos de entrada del correo desde el Complemento de Gmail."""
+    From: str = Field(..., description="Dirección de correo del remitente.")
+    To: str = Field(..., description="Dirección de correo del destinatario.")
+    Subject: str = Field(..., description="Asunto del correo.")
+    Body: str = Field(..., description="Cuerpo del correo (texto plano).")
+    MessageId: str = Field(..., description="ID único del mensaje de Gmail.")
+    Date: str = Field(..., description="Fecha y hora del correo en formato ISO 8601.")
+    Concatenated_URLs: str = Field("No Data", description="URLs extraídas del cuerpo del mensaje, separadas por espacio.")
+
+
+def convert_to_float(value: Any) -> float:
+    """Convierte numpy.float32/64 a float de Python para JSON serializable."""
+    if isinstance(value, np.float32) or isinstance(value, np.float64):
+        return float(value)
+    return value
 
 
 # =============================================================================
-# 2. FUNCIONES DE PREPROCESAMIENTO (REPLICANDO JUPYTER)
+# 2. FUNCIONES DE INGENIERÍA DE CARACTERÍSTICAS
 # =============================================================================
 
-def convert_to_float(value):
-    return float(value)
+def extract_time_feature(email_data: EmailData) -> float:
+    """Extrae la hora (0-23) del campo 'Date'."""
+    try:
+        # Reemplazar 'Z' por '+00:00' para compatibilidad con datetime.fromisoformat
+        date_obj = datetime.fromisoformat(email_data.Date.replace('Z', '+00:00'))
+        hour_temp = float(date_obj.hour)
+    except Exception:
+        hour_temp = 0.0 # Valor seguro por defecto
+    return hour_temp
 
-def generate_bert_embeddings(text: str, tokenizer: BertTokenizer, model_bert: BertModel, max_length: int = MAX_LENGTH, device: torch.device = device) -> np.ndarray:
-    if model_bert is None or tokenizer is None:
-        raise RuntimeError("BERT Model/Tokenizer not loaded.")
+
+def preprocess_additional_features(email_data: EmailData, label_encoders: Dict) -> np.ndarray:
+    """
+    Codifica From/To y la Hora. Retorna las 3 features ADICIONALES (NO ESCALADAS).
+    
+    NOTA IMPORTANTE: Se ha eliminado el escalado de aquí, ya que el SCALER fue
+    entrenado para las 771 features combinadas.
+    """
+    
+    categorical_cols = ['From', 'To'] 
+    
+    df_processed = pd.DataFrame([{
+        'From': email_data.From,
+        'To': email_data.To,
+    }])
+
+    # 1.1. Hora
+    hour_temp = extract_time_feature(email_data)
+    df_processed['Hour_temp'] = hour_temp
+    
+    # 1.2. Codificación Categórica (From, To)
+    for col in categorical_cols:
+        le = label_encoders.get(col)
+        if le is None: continue
+
+        input_value = df_processed[col].iloc[0]
         
-    encoding = tokenizer.encode_plus(
-        text,
-        add_special_tokens=True,
-        max_length=max_length,
-        padding='max_length',
-        truncation=True,
+        # Manejar categorías no vistas (OOD - Out of Distribution)
+        if input_value in le.classes_:
+            encoded_value = le.transform([input_value])[0]
+        else:
+            # Asignar un valor seguro (ej. el siguiente índice disponible)
+            encoded_value = len(le.classes_) 
+            
+        df_processed[col] = encoded_value
+            
+    # Retornar el array de 3 features (1, 3) SIN ESCALAR
+    features_to_return = df_processed[categorical_cols + ['Hour_temp']]
+    features_array = features_to_return.values 
+    
+    return features_array
+
+
+@torch.no_grad()
+def generate_bert_embeddings(text: str, tokenizer: BertTokenizer, model: BertModel) -> np.ndarray:
+    """
+    Genera el embedding CLS usando BERT para un solo texto.
+    """
+    
+    encoded_input = tokenizer(
+        text, 
+        padding='max_length', 
+        truncation=True, 
+        max_length=MAX_LENGTH, 
         return_tensors='pt'
     )
-    
-    input_ids = encoding['input_ids'].to(device)
-    attention_mask = encoding['attention_mask'].to(device)
-    
-    with torch.no_grad():
-        output = model_bert(input_ids=input_ids, attention_mask=attention_mask)
-        
-    cls_embedding = output.last_hidden_state[:, 0, :].cpu().numpy()
-    
-    return cls_embedding.flatten()
 
-def extract_url_features(body_text: str) -> np.ndarray:
-    
-    url_pattern = r'\bhttps?://[\w.-]+(?:\/[\w./?%&=-]*)?\b'
-    urls = re.findall(url_pattern, body_text)
-    
-    n_urls = len(urls)
-    ip_pattern = r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}'
-    has_ip_in_url = 1 if any(re.search(ip_pattern, urlparse(url).netloc) for url in urls) else 0
+    input_ids = encoded_input['input_ids'].to(device)
+    attention_mask = encoded_input['attention_mask'].to(device)
 
-    features = np.array([
-        n_urls, 
-        has_ip_in_url,
-    ])
+    # Uso de autocast para rendimiento (si CUDA está disponible)
+    with autocast(enabled=device.type == 'cuda'): 
+        outputs = model(input_ids=input_ids, attention_mask=attention_mask)
     
-    return features
-
-def calculate_text_features(subject: str, body: str, n_attachments: int = 0) -> np.ndarray:
+    # El embedding CLS (el primer token) es el resumen de la secuencia
+    cls_embedding = outputs.last_hidden_state[:, 0, :].cpu().numpy()
     
-    full_text = f"{subject} {body}"
-    
-    len_subject = len(subject)
-    len_body = len(body)
-    len_full_text = len(full_text)
-    
-    n_at = full_text.count('@')
-    n_html_tags = len(re.findall(r'<.*?>', body))
-
-    n_attachments_feature = n_attachments # SE MANTIENE A CERO
-
-    # Nota: si el feature de n_attachments ya no se usa en el entrenamiento, se debe eliminar de aquí y del SCALER
-    features = np.array([
-        len_subject,
-        len_body,
-        len_full_text,
-        n_at,
-        n_html_tags,
-        n_attachments_feature, # MANTENER si está en el SCALER, sino, ELIMINAR
-    ])
-    
-    return features
+    return cls_embedding # Retorna (1, 768)
 
 
 # =============================================================================
-# 3. LÓGICA DE INFERENCIA DE ADJUNTOS (ELIMINADO)
-# =============================================================================
-# ELIMINADO: async def analyze_attachment(attachment: Attachment):
-
-
-# =============================================================================
-# 4. ENDPOINT PRINCIPAL
+# 3. CARGA DE ARTEFACTOS
 # =============================================================================
 
-@app.post("/")
-async def predict_phishing(email: EmailData, request: Request):
-    if MODEL is None or SCALER is None or MODEL_BERT is None or UMBRAL_OPTIMO is None:
-        raise HTTPException(status_code=503, detail="ML service is initializing or failed to load critical components.")
-        
+def load_ml_artifacts():
+    """Carga todos los artefactos de ML necesarios al inicio de la API."""
+    global MODEL, SCALER, LABEL_ENCODERS, UMBRAL_OPTIMO, TOKENIZER, MODEL_BERT
+
     try:
-        # ASUMIENDO que n_attachments = 0 (ya no se reciben adjuntos)
-        n_attachments = 0 
-        
-        X_text_features = calculate_text_features(email.Subject, email.Body, n_attachments)
-        X_url_features = extract_url_features(email.Body)
+        # 1. Cargar Modelo, Escalador y Encoders
+        MODEL = joblib.load(MODEL_PATH)
+        SCALER = joblib.load(SCALER_PATH)
+        LABEL_ENCODERS = joblib.load(ENCODER_PATH)
 
-        # 1. Combinar Features Adicionales (Numéricas)
-        X_additional = np.hstack([X_text_features, X_url_features])
-        
-        # 2. Escalado de Features Adicionales
-        X_additional_scaled = SCALER.transform(X_additional.reshape(1, -1))
-        
-        # 3. Generación de Embeddings BERT
-        text_for_bert = " ".join([email.Subject, email.Body])
-        X_bert_embeddings = generate_bert_embeddings(text_for_bert, TOKENIZER, MODEL_BERT)
-        
-        # 4. Combinación Final
-        X_combined = np.hstack([X_bert_embeddings.reshape(1, -1), X_additional_scaled])
-        
-        # 5. Predicción del Modelo Final
-        pred_prob = MODEL.predict_proba(X_combined)[0]
-        prob_phishing = pred_prob[1]
+        # 2. Cargar Umbral Óptimo de Validación
+        with open(METRICS_PATH_VALIDATION, 'r') as f:
+            metrics = json.load(f)
+            # El umbral está anidado en el reporte
+            UMBRAL_OPTIMO = metrics.get('final_threshold')
+            
+        # 3. Cargar BERT Tokenizer y Modelo
+        TOKENIZER = BertTokenizer.from_pretrained(BERT_MODEL_NAME)
+        MODEL_BERT = BertModel.from_pretrained(BERT_MODEL_NAME).to(device).eval()
 
-        # 6. Aplicación de la Política de Umbral
+        print(f"✅ Artefactos ML cargados. Modelo listo en {device}.")
+        print(f"✅ Umbral Óptimo (Final Threshold): {UMBRAL_OPTIMO}")
+
+    except Exception as e:
+        print(f"❌ ERROR CRÍTICO al cargar artefactos de ML: {e}")
+        # En un entorno de producción, esto debería salir o generar un log de alerta.
+        raise RuntimeError("No se pudieron cargar los artefactos de ML. Verifique las rutas y archivos .joblib.")
+
+# Hook de inicialización de FastAPI
+@app.on_event("startup")
+async def startup_event():
+    load_ml_artifacts()
+
+
+# =============================================================================
+# 4. ENDPOINT DE PREDICCIÓN
+# =============================================================================
+
+@app.post("/predict")
+async def predict_phishing(email_data: EmailData):
+    
+    # 1. Validación de Artefactos
+    if MODEL is None or SCALER is None or UMBRAL_OPTIMO is None:
+        raise HTTPException(status_code=503, detail={"status": "ERROR", "message": "Servicio de ML no inicializado. Inténtelo más tarde."})
+
+    try:
+        # 2. PREPARACIÓN DE FEATURES
+        subject = email_data.Subject or ""
+        body = email_data.Body or ""
+        text_for_bert = " ".join([subject, body])
+
+        # 2.1. Embeddings BERT (768 features)
+        X_bert_embeddings = generate_bert_embeddings(text_for_bert, TOKENIZER, MODEL_BERT) 
+        
+        # 2.2. Features Adicionales (3 features SIN ESCALAR)
+        X_additional_unscaled = preprocess_additional_features(email_data, LABEL_ENCODERS) 
+        
+        # 3. COMBINACIÓN Y ESCALADO (CORRECCIÓN CLAVE)
+        # Combinación Final: BERT (768) + Adicionales (3) -> 771 features (NO ESCALADAS)
+        X_combined_unscaled = np.hstack([
+            X_bert_embeddings.reshape(1, -1), 
+            X_additional_unscaled.reshape(1, -1)
+        ]) 
+        
+        # Aplicación del StandardScaler sobre las 771 features combinadas
+        X_final_scaled = SCALER.transform(X_combined_unscaled) 
+
+        # 4. PREDICCIÓN
+        pred_prob = MODEL.predict_proba(X_final_scaled)[0]
+        prob_phishing = pred_prob[1] # Probabilidad de la clase 1 (Phishing)
+
+        # Aplicación del Umbral Óptimo
         ml_verdict = (
             "Phishing" if prob_phishing >= UMBRAL_OPTIMO else
             "Safe"
         )
         
-        # 7. Análisis de Adjuntos (Simplificado)
-        # La bandera de 'malicious_file' debe ser False ya que no se analizan adjuntos.
-        malicious_attachments = False 
+        malicious_attachments = False # Fijo a False ya que no se procesan adjuntos
 
-        # 8. Retorno de la Respuesta (Formato Apps Script)
         prediction = [{
             "model_prediction": {
                 "label": ml_verdict, 
@@ -225,10 +253,16 @@ async def predict_phishing(email: EmailData, request: Request):
         return {"status": "OK", "predictions": prediction}
 
     except Exception as e:
-        return JSONResponse(status_code=500, content={"status": "ERROR", "message": f"Error interno del servidor: {e}"})
+        # Log del error en el contenedor
+        print(f"Error en la predicción: {e}")
+        # Retornar una respuesta JSON con código 500
+        raise HTTPException(status_code=500, detail={"status": "ERROR", "message": f"Error interno del servidor: {e}"})
+
+# =============================================================================
+# 5. ENDPOINT DE ESTADO
+# =============================================================================
 
 @app.get("/health")
 def read_root():
-    if MODEL is None or SCALER is None or MODEL_BERT is None:
-        raise HTTPException(status_code=503, detail="ML service failed to load.")
-    return {"message": "SecureMail-API está operativa y saludable."}
+    """Endpoint simple para verificar que la API está viva."""
+    return {"status": "OK", "message": "Phishing Detection API running."}
