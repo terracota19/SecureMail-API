@@ -12,18 +12,29 @@ permissions:
 
 jobs:
   Auto-snyk-test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest 
 
     steps:
       - name: Checkout del código
         uses: actions/checkout@v4
 
-      - name: Configurar entorno virtual e instalar dependencias
+      - name: Configurar Python 3
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Configurar entorno virtual e instalar dependencias y Snyk
         run: |
           python3 -m venv $HOME/venv  
           source $HOME/venv/bin/activate
-          pip install -r requirements.txt   
+          pip install -r requirements.txt
+          
+          npm install -g snyk
+          
+          echo '{"$schema": "https://schemastore.azurewebsites.net/schemas/json/sarif-2.1.0-rtm.5.json", "version": "2.1.0", "runs": []}' > snyk-code.sarif
+          
           snyk code test --sarif > snyk-code.sarif || true
+          
           snyk test --json > snyk-sca.json || true
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_AUTH_TOKEN }}
@@ -33,9 +44,8 @@ jobs:
         with:
           sarif_file: snyk-code.sarif
 
-      - name: Subir resultados de Snyk como artifact
+      - name: Subir resultados de Snyk SCA como artifact
         uses: actions/upload-artifact@v4
         with:
-          name: snyk-reports
-          path: 
-            snyk-sca.json
+          name: snyk-sca-report
+          path: snyk-sca.json
