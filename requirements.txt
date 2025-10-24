@@ -1,0 +1,16 @@
+fastapi
+joblib
+numpy
+pandas
+python-dotenv
+scikit_learn
+slowapi
+torch
+huggingface-hub
+transformers
+uvicorn
+xgboost
+pydantic[email]
+lightgbm
+category_encoders
+sentencepiece
