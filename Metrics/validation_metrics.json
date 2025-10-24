@@ -1,0 +1,24 @@
+{
+    "best_policy_name": "R_min_98_P_min_90",
+    "final_threshold": 0.85,
+    "metrics_at_final_threshold": {
+        "threshold": 0.85,
+        "Precision": 0.9926734092538027,
+        "Recall": 0.9800298765626229,
+        "F1-Score": 0.9863111251780345
+    },
+    "all_policy_metrics": {
+        "Default_0_5": {
+            "threshold": 0.5,
+            "Precision": NaN,
+            "Recall": NaN,
+            "F1-Score": NaN
+        },
+        "R_min_98_P_min_90": {
+            "threshold": 0.85,
+            "Precision": 0.9926734092538027,
+            "Recall": 0.9800298765626229,
+            "F1-Score": 0.9863111251780345
+        }
+    }
+}
