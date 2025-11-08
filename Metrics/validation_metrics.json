@@ -1,0 +1,30 @@
+{
+    "best_policy_name": "Sweet_Spot_95_95",
+    "final_threshold": 0.7002617955207825,
+    "metrics_at_final_threshold": {
+        "threshold": 0.7002617955207825,
+        "Precision": 0.9945279352868869,
+        "Recall": 0.9859658778205834,
+        "F1-Score": 0.9902283988392523
+    },
+    "all_policy_metrics": {
+        "Sweet_Spot_95_95": {
+            "threshold": 0.7002617955207825,
+            "Precision": 0.9945279352868869,
+            "Recall": 0.9859658778205834,
+            "F1-Score": 0.9902283988392523
+        },
+        "Solid_Balance_90_90": {
+            "threshold": 0.7002617955207825,
+            "Precision": 0.9945279352868869,
+            "Recall": 0.9859658778205834,
+            "F1-Score": 0.9902283988392523
+        },
+        "Fallback_Balance_85_85": {
+            "threshold": 0.7002617955207825,
+            "Precision": 0.9945279352868869,
+            "Recall": 0.9859658778205834,
+            "F1-Score": 0.9902283988392523
+        }
+    }
+}
