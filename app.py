@@ -1,310 +1,259 @@
-
 import re
-
 import joblib
 import numpy as np
 import torch
 import pandas as pd
-import json 
-from dotenv import load_dotenv
-from urllib.parse import urlparse 
-from transformers import XLMRobertaTokenizer, XLMRobertaModel
-from pydantic import BaseModel, Field
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+import json
+import os
+from urllib.parse import urlparse
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from torch.cuda.amp import autocast 
-from datetime import datetime
-from typing import Dict, Any, Union
-from sklearn.preprocessing import StandardScaler
-from category_encoders import HashingEncoder
+from pydantic import BaseModel, Field
+from transformers import XLMRobertaTokenizer, XLMRobertaModel
 
 # =============================================================================
-# 0. CONFIGURACIÓN Y ARTEFACTOS 
+# CONFIGURACIÓN GLOBAL
 # =============================================================================
 
-# Constantes de BERT
 BERT_MODEL_NAME = 'xlm-roberta-base'
-MAX_LENGTH = 128 
-EMBEDDING_DIM = 768 
+MAX_LENGTH = 128
+EMBEDDING_DIM = 768
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-# Rutas de Artefactos 
-MODEL_PATH = './models/best_phishing_model.joblib'
-SCALER_PATH = './objects/feature_scaler.joblib'
-ENCODER_PATH = './objects/label_encoders.joblib' 
-METRICS_PATH_VALIDATION = './Metrics/validation_metrics.json'
-
-# Variables Globales (se inicializan en load_ml_artifacts)
-UMBRAL_OPTIMO: Union[float, None] = None
-MODEL: Any = None
-SCALER: Any = None
-LABEL_ENCODERS: Dict = {}
-TOKENIZER: Any = None
-MODEL_BERT: Any = None
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = os.path.join(BASE_DIR, 'models/best_phishing_model.joblib')
+PIPELINE_PATH = os.path.join(BASE_DIR, 'objects/feature_scaler.joblib')
+METRICS_PATH = os.path.join(BASE_DIR, 'Metrics/validation_metrics.json')
 
 MISSING_VALUE_STR = 'No Data'
-CATEGORICAL_FEATURES = ['From', 'To']
-TIME_FEATURE = 'Hour_temp'
 BERT_SEP_TOKEN = '[SEP]'
 
-# Carga de variables de entorno (si las hubiera)
-load_dotenv()
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') 
+ML_ARTIFACTS = {}
 
-app = FastAPI(title="SecureMail Phishing Detection API", version="1.0.0")
+def engineer_detailed_features(df_input):
+    """
+    Aplica la misma ingeniería de características que se usó durante el entrenamiento.
+    """
+    df_eng = df_input.copy()
 
-# Configuración CORS para el Complemento de Gmail
+    for col in ['Subject', 'Body', 'From', 'Concatenated_URLs', 'Date']:
+         df_eng[col] = df_eng.get(col, MISSING_VALUE_STR).astype(str).fillna(MISSING_VALUE_STR)
+
+    df_eng['subject_perc_caps'] = df_eng['Subject'].apply(lambda x: sum(1 for c in str(x) if c.isupper()) / (len(str(x)) + 1e-6))
+    df_eng['subject_kw_urgent'] = df_eng['Subject'].str.contains(r'urgent|URGENT|Important|IMPORTANTE', case=False).astype(int)
+
+    df_eng['body_num_words'] = df_eng['Body'].apply(lambda x: len(str(x).split()))
+    df_eng['body_num_unique_words'] = df_eng['Body'].apply(lambda x: len(set(str(x).split())))
+    df_eng['body_perc_caps'] = df_eng['Body'].apply(lambda x: sum(1 for c in str(x) if c.isupper()) / (len(str(x)) + 1e-6))
+    df_eng['body_kw_sensitive'] = df_eng['Body'].str.contains(r'password|account|verify|bank|ssn|confidential', case=False).astype(int)
+    df_eng['Saludo_Generico'] = df_eng['Body'].str.contains(r'Dear user|Dear customer|Dear account holder', case=False).astype(int)
+
+    richness = df_eng['body_num_unique_words'] / (df_eng['body_num_words'] + 1e-6)
+    df_eng['body_richness_category'] = pd.cut(richness, bins=[-1, 0.3, 0.7, 999], labels=['Low', 'Medium', 'High'], right=False).astype(str).fillna('Low')
+
+    def get_domain(sender):
+        if not isinstance(sender, str) or '@' not in sender: return MISSING_VALUE_STR
+        match = re.search(r'@([\w.-]+)', sender)
+        return match.group(1) if match else MISSING_VALUE_STR
+
+    df_eng['from_domain'] = df_eng['From'].apply(get_domain)
+    df_eng['from_num_subdomains'] = df_eng['from_domain'].apply(lambda x: x.count('.') - 1 if x != MISSING_VALUE_STR else 0)
+    common_domains = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'aol.com']
+    df_eng['from_is_common_domain'] = df_eng['from_domain'].isin(common_domains).astype(int)
+
+    def get_urls_list(text):
+        if not isinstance(text, str) or text == MISSING_VALUE_STR or not text.strip(): return []
+        return re.split(r'[,\s]+', text.strip())
+
+    df_eng['url_list'] = df_eng['Concatenated_URLs'].apply(get_urls_list)
+    df_eng['url_count'] = df_eng['url_list'].apply(lambda x: len([u for u in x if len(u) > 1]))
+    df_eng['url_has_ip'] = df_eng['Concatenated_URLs'].str.contains(r'https?://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}').astype(int)
+    df_eng['url_has_at'] = df_eng['Concatenated_URLs'].str.contains(r'@').astype(int)
+    df_eng['url_has_exe'] = df_eng['Concatenated_URLs'].str.contains(r'\.exe', case=False).astype(int)
+
+    def avg_subdomains(urls):
+        if not urls: return 0
+        count = 0
+        valid_urls = 0
+        for url_str in urls:
+            if len(url_str) < 5: continue 
+            try:
+                hostname = urlparse(url_str).hostname
+                if hostname:
+                    count += hostname.count('.') - 1
+                    valid_urls += 1
+            except: pass
+        return count / valid_urls if valid_urls > 0 else 0
+
+    def avg_path_len(urls):
+        if not urls: return 0
+        length = 0
+        valid_urls = 0
+        for url_str in urls:
+             if len(url_str) < 5: continue
+             try:
+                 path = urlparse(url_str).path
+                 if path:
+                     length += len(path)
+                     valid_urls += 1
+             except: pass
+        return length / valid_urls if valid_urls > 0 else 0
+
+    df_eng['url_avg_subdomains'] = df_eng['url_list'].apply(avg_subdomains)
+    df_eng['url_avg_path_len'] = df_eng['url_list'].apply(avg_path_len)
+    df_eng['Date_dt'] = pd.to_datetime(df_eng['Date'], errors='coerce', utc=True)
+    df_eng['Hour'] = df_eng['Date_dt'].dt.hour.fillna(0).astype(float)
+
+    df_eng.replace([np.inf, -np.inf], 0, inplace=True)
+    df_eng.fillna(0, inplace=True) 
+
+    return df_eng
+
+# =============================================================================
+# CICLO DE VIDA DE LA APLICACIÓN (Lifespan)
+# =============================================================================
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Maneja la carga inicial de modelos (startup) y la limpieza (shutdown).
+    """
+    print("🚀 [STARTUP] Iniciando SecureMail API...")
+    try:
+        ML_ARTIFACTS['model'] = joblib.load(MODEL_PATH)
+        print(f"✅ Modelo cargado desde {MODEL_PATH}")
+        
+        ML_ARTIFACTS['pipeline'] = joblib.load(PIPELINE_PATH)
+        print(f"✅ Pipeline estructurado cargado desde {PIPELINE_PATH}")
+
+        if os.path.exists(METRICS_PATH):
+            with open(METRICS_PATH, 'r') as f:
+                metrics = json.load(f)
+            ML_ARTIFACTS['threshold'] = metrics.get('final_threshold', 0.5)
+            print(f"✅ Umbral de decisión cargado: {ML_ARTIFACTS['threshold']}")
+        else:
+            print("⚠️ Archivo de métricas no encontrado. Usando umbral por defecto 0.5.")
+            ML_ARTIFACTS['threshold'] = 0.5
+
+        print("⏳ Cargando BERT (esto puede tardar un poco)...")
+        ML_ARTIFACTS['tokenizer'] = XLMRobertaTokenizer.from_pretrained(BERT_MODEL_NAME)
+        ML_ARTIFACTS['bert'] = XLMRobertaModel.from_pretrained(BERT_MODEL_NAME).to(DEVICE).eval()
+        print(f"✅ BERT cargado correctamente en {DEVICE}.")
+
+    except Exception as e:
+        print(f"❌ ERROR CRÍTICO DURANTE EL STARTUP: {e}")
+        raise RuntimeError("Fallo al inicializar los modelos de ML.") from e
+    
+    yield 
+
+    ML_ARTIFACTS.clear()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    print("🛑 [SHUTDOWN] API detenida y recursos liberados.")
+
+app = FastAPI(title="SecureMail Phishing Detection API", version="2.0", lifespan=lifespan)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # Permitir todos los orígenes para el desarrollo con ngrok
+    allow_origins=["*"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# =============================================================================
+# MODELOS DE DATOS (Pydantic)
+# =============================================================================
+class EmailInput(BaseModel):
+    """Define la estructura esperada del JSON que envía el complemento de Gmail."""
+    From: str = Field(..., description="Remitente del correo")
+    To: str = Field(..., description="Destinatario del correo")
+    Subject: str = Field(..., description="Asunto del correo")
+    Body: str = Field(..., description="Cuerpo del correo en texto plano")
+    Date: str = Field(..., description="Fecha de recepción")
+    Concatenated_URLs: str = Field("", description="URLs extraídas del cuerpo, separadas por espacios o comas")
+    MessageId: str = Field(..., description="ID único del mensaje para trazabilidad")
 
 # =============================================================================
-# 1. MODELOS DE DATOS Y UTILIDADES
+# ENDPOINTS DE LA API
 # =============================================================================
-
-class EmailData(BaseModel):
-    """Esquema de datos de entrada del correo desde el Complemento de Gmail."""
-    From: str = Field(..., description="Dirección de correo del remitente.")
-    To: str = Field(..., description="Dirección de correo del destinatario.")
-    Subject: str = Field(..., description="Asunto del correo.")
-    Body: str = Field(..., description="Cuerpo del correo (texto plano).")
-    MessageId: str = Field(..., description="ID único del mensaje de Gmail.")
-    Date: str = Field(..., description="Fecha y hora del correo en formato ISO 8601.")
-    Concatenated_URLs: str = Field("No Data", description="URLs extraídas del cuerpo del mensaje, separadas por espacio.")
-
-
-def convert_to_float(value: Any) -> float:
-    """Convierte numpy.float32/64 a float de Python para JSON serializable."""
-    if isinstance(value, np.float32) or isinstance(value, np.float64):
-        return float(value)
-    return value
-
-
-# =============================================================================
-# 2. FUNCIONES DE INGENIERÍA DE CARACTERÍSTICAS
-# =============================================================================
-
-def extract_time_feature(df):
-    """Extrae la hora (0-23) del campo 'Date' y devuelve el DF."""
-    df_copy = df.copy()
-    if 'Date' in df_copy.columns:
-        print("   ... (extract_time_feature) Parseando 'Date' con pd.to_datetime...")
-        # Asegurar que el formato ISO 8601 de la API sea manejado correctamente
-        df_copy['Date_dt'] = pd.to_datetime(df_copy['Date'], errors='coerce', utc=True)
-        
-        df_copy[TIME_FEATURE] = df_copy['Date_dt'].dt.hour.astype(float).fillna(0)
-        df_copy.drop(columns=['Date_dt'], inplace=True, errors='ignore') 
-        print(f"   ... (extract_time_feature) '{TIME_FEATURE}' creada.")
-    else:
-        print("⚠️ Columna 'Date' no encontrada. Creando feature de hora con ceros.")
-        df_copy[TIME_FEATURE] = 0.0
-    return df_copy
-
-def transform_preprocess_additional_features(df, label_encoders, scaler):
-    """
-    Aplica preprocesadores (Hashing, Time, Scaling) ya ajustados a nuevos datos.
-    """
-    import numpy as np
-    import pandas as pd
-    
-    print("--- (transform_preprocess) 1. Llamando a extract_time_feature ---")
-    df_processed = extract_time_feature(df) 
-    
-    hasher = label_encoders['feature_hasher']
-    
-    cols_to_hash = [col for col in CATEGORICAL_FEATURES if col in df_processed.columns]
-    
-    num_hash_cols_expected = len([f for f in scaler.feature_names_in_ if f.startswith('col_')])
-    
-    if not cols_to_hash:
-        print(f"   ... (transform_preprocess) ⚠️ No se encontraron columnas categóricas. Creando {num_hash_cols_expected} columnas de ceros.")
-        transformed_data_hashed_values = np.zeros((len(df_processed), num_hash_cols_expected))
-    else:
-        print(f"   ... (transform_preprocess) 2. Aplicando HashingEncoder (transform) a {cols_to_hash} ---")
-        df_processed_cat = df_processed[cols_to_hash].astype(str).fillna(MISSING_VALUE_STR)
-        transformed_data_hashed = hasher.transform(df_processed_cat)
-        transformed_data_hashed_values = transformed_data_hashed.values
-        
-        if transformed_data_hashed_values.shape[1] != num_hash_cols_expected:
-            print(f"   ... (transform_preprocess) ❌ ERROR: Hasher generó {transformed_data_hashed_values.shape[1]} cols, Scaler espera {num_hash_cols_expected}.")
-            if transformed_data_hashed_values.shape[1] < num_hash_cols_expected:
-                 pad_width = num_hash_cols_expected - transformed_data_hashed_values.shape[1]
-                 transformed_data_hashed_values = np.pad(transformed_data_hashed_values, ((0,0), (0, pad_width)), 'constant', constant_values=0)
-                 print(f"   ... (transform_preprocess) ✅ Ajustado (padding) a {num_hash_cols_expected} cols.")
-            else:
-                 transformed_data_hashed_values = transformed_data_hashed_values[:, :num_hash_cols_expected]
-                 print(f"   ... (transform_preprocess) ✅ Ajustado (truncado) a {num_hash_cols_expected} cols.")
-
-
-    time_values = None
-    if TIME_FEATURE in scaler.feature_names_in_:
-        if TIME_FEATURE in df_processed.columns:
-            print(f"   ... (transform_preprocess) 3. Obteniendo feature '{TIME_FEATURE}' ---")
-            time_values = df_processed[[TIME_FEATURE]].fillna(0).values
-        else:
-            print(f"   ... (transform_preprocess) ⚠️ Columna '{TIME_FEATURE}' no encontrada. Usando ceros.")
-            time_values = np.zeros((len(df_processed), 1))
-    
-    print("   ... (transform_preprocess) 4. Combinando (hstack) features para scaler ---")
-    features_to_scale_list = []
-    
-    features_to_scale_list.append(transformed_data_hashed_values)
-    
-    if time_values is not None:
-         features_to_scale_list.append(time_values)
-    
-    if not features_to_scale_list:
-         print("   ... (transform_preprocess) ❌ No hay features para escalar.")
-         return np.array([]).reshape(len(df_processed), 0)
-
-    features_to_scale = np.hstack(features_to_scale_list).astype(float)
-    
-    print("   ... (transform_preprocess) 5. Aplicando StandardScaler (transform) ---")
-    
-    if features_to_scale.shape[1] != len(scaler.feature_names_in_):
-         print(f"   ... (transform_preprocess) ❌ ERROR DE DIMENSIÓN FINAL: Datos tienen {features_to_scale.shape[1]} features, Scaler espera {len(scaler.feature_names_in_)}.")
-         print(f"   ... Scaler espera: {scaler.feature_names_in_}")
-         raise ValueError(f"Inconsistencia de features: se generaron {features_to_scale.shape[1]} features, pero el scaler fue ajustado con {len(scaler.feature_names_in_)}")
-
-    scaled_data = scaler.transform(features_to_scale)
-    print("   ... (transform_preprocess) 6. transform_preprocess completado ---")
-    return scaled_data 
-
-
-@torch.no_grad()
-def generate_bert_embeddings(text: str) -> np.ndarray:
-    """
-    Genera el embedding CLS usando BERT (XLM-Roberta) para un solo texto.
-    """
-    
-    encoded_input = TOKENIZER( # Usa el TOKENIZER global
-        text, 
-        padding='max_length', 
-        truncation=True, 
-        max_length=MAX_LENGTH, 
-        return_tensors='pt',
-        add_special_tokens=True
-    )
-
-    input_ids = encoded_input['input_ids'].to(device)
-    attention_mask = encoded_input['attention_mask'].to(device)
-
-    # Uso de autocast para rendimiento (si CUDA está disponible)
-    with autocast(enabled=device.type == 'cuda'): 
-        outputs = MODEL_BERT(input_ids=input_ids, attention_mask=attention_mask) # Usa el MODEL_BERT global
-    
-    # Usar last_hidden_state[:, 0, :] para el CLS token, igual que en el pre-cálculo
-    cls_embedding = outputs.last_hidden_state[:, 0, :].cpu().numpy()
-    
-    return cls_embedding # Retorna (1, 768)
-
-# =============================================================================
-# 3. CARGA DE ARTEFACTOS
-# =============================================================================
-
-def load_ml_artifacts():
-    """Carga todos los artefactos de ML necesarios al inicio de la API."""
-    global MODEL, SCALER, LABEL_ENCODERS, UMBRAL_OPTIMO, TOKENIZER, MODEL_BERT
-
-    try:
-        # 1. Cargar Modelo, Escalador y Encoders
-        MODEL = joblib.load(MODEL_PATH)
-        SCALER = joblib.load(SCALER_PATH)
-        LABEL_ENCODERS = joblib.load(ENCODER_PATH)
-
-        # 2. Cargar Umbral Óptimo de Validación
-        with open(METRICS_PATH_VALIDATION, 'r') as f:
-            metrics = json.load(f)
-            # El umbral está en el nivel superior del JSON
-            UMBRAL_OPTIMO = metrics.get('final_threshold')
-            if UMBRAL_OPTIMO is None:
-                print(f"⚠️ 'final_threshold' no encontrado, usando 0.5 por defecto.")
-                UMBRAL_OPTIMO = 0.5
-            
-        # 3. Cargar BERT Tokenizer y Modelo (Corregido a XLM-Roberta)
-        TOKENIZER = XLMRobertaTokenizer.from_pretrained(BERT_MODEL_NAME)
-        MODEL_BERT = XLMRobertaModel.from_pretrained(BERT_MODEL_NAME).to(device).eval()
-
-        print(f"✅ Artefactos ML cargados. Modelo listo en {device}.")
-        print(f"✅ Umbral Óptimo (Final Threshold): {UMBRAL_OPTIMO}")
-
-    except Exception as e:
-        print(f"❌ ERROR CRÍTICO al cargar artefactos de ML: {e}")
-        raise RuntimeError("No se pudieron cargar los artefactos de ML. Verifique las rutas y archivos .joblib.")
-
-# Hook de inicialización de FastAPI
-@app.on_event("startup")
-async def startup_event():
-    load_ml_artifacts()
-
-# =============================================================================
-# 4. ENDPOINT DE PREDICCIÓN
-# =============================================================================
+@app.get("/health")
+def health_check():
+    """Endpoint simple para verificar que la API está activa y los modelos cargados."""
+    return {
+        "status": "online",
+        "device_used": str(DEVICE),
+        "models_loaded": bool(ML_ARTIFACTS),
+        "current_threshold": ML_ARTIFACTS.get('threshold')
+    }
 
 @app.post("/predict")
-async def predict_phishing(email_data: EmailData):
-    
-    # 1. Validación de Artefactos
-    if MODEL is None or SCALER is None or UMBRAL_OPTIMO is None or LABEL_ENCODERS is None:
-        raise HTTPException(status_code=503, detail={"status": "ERROR", "message": "Servicio de ML no inicializado. Inténtelo más tarde."})
+async def predict(email_data: EmailInput):
+    """
+    Endpoint principal de predicción. Recibe los datos del correo, aplica
+    toda la ingeniería de características y devuelve un veredicto de phishing.
+    """
+    if not ML_ARTIFACTS:
+        raise HTTPException(status_code=503, detail="Servicio no inicializado correctamente.")
 
     try:
-        # 2. PREPARACIÓN DE FEATURES (LÓGICA CORRECTA)
+        df_raw = pd.DataFrame([email_data.model_dump()])
+        df_engineered = engineer_detailed_features(df_raw)
 
-        text_for_bert = (
-            f"{email_data.Subject or MISSING_VALUE_STR} {BERT_SEP_TOKEN} "
-            f"{email_data.Body or MISSING_VALUE_STR} {BERT_SEP_TOKEN} "
-            f"{email_data.Concatenated_URLs or MISSING_VALUE_STR}"
-        )
+        try:
+            X_structured = ML_ARTIFACTS['pipeline'].transform(df_engineered)
+            X_structured = X_structured.astype(np.float32) 
+        except Exception as e:
+            print(f"Error en preprocesamiento estructurado: {e}")
+            raise HTTPException(status_code=400, detail="Error al procesar las características del correo.")
+
+        text_parts = [
+            str(df_engineered.iloc[0].get('From', MISSING_VALUE_STR)),
+            str(df_engineered.iloc[0].get('To', MISSING_VALUE_STR)),
+            str(df_engineered.iloc[0].get('Date', MISSING_VALUE_STR)),
+            str(df_engineered.iloc[0].get('Subject', MISSING_VALUE_STR)),
+            str(df_engineered.iloc[0].get('Body', MISSING_VALUE_STR)),
+            str(df_engineered.iloc[0].get('Concatenated_URLs', MISSING_VALUE_STR))
+        ]
+        full_text = f" {BERT_SEP_TOKEN} ".join(text_parts)
+
+        bert_inputs = ML_ARTIFACTS['tokenizer'](
+            full_text,
+            return_tensors="pt",
+            max_length=MAX_LENGTH,
+            truncation=True,
+            padding='max_length'
+        ).to(DEVICE)
+
+        with torch.no_grad():
+            bert_outputs = ML_ARTIFACTS['bert'](**bert_inputs)
         
-        X_bert_embeddings = generate_bert_embeddings(text_for_bert) # (1, 768)
-        
-        df_input = pd.DataFrame([email_data.dict()])
-        
-        X_additional_scaled = transform_preprocess_additional_features(
-            df_input, LABEL_ENCODERS, SCALER
-        ) # (1, 101)
+        X_bert = bert_outputs.last_hidden_state[:, 0, :].cpu().numpy()
+        X_final = np.hstack([X_bert, X_structured])
 
-        X_final_combined = np.hstack([
-            X_bert_embeddings.reshape(1, -1), 
-            X_additional_scaled.reshape(1, -1)
-        ])
+        phishing_prob = float(ML_ARTIFACTS['model'].predict_proba(X_final)[0][1])
 
-        pred_prob = MODEL.predict_proba(X_final_combined)[0]
-        prob_phishing = pred_prob[1] # Probabilidad de la clase 1 (Phishing)
+        threshold = ML_ARTIFACTS['threshold']
+        label = "Phishing" if phishing_prob >= threshold else "Safe"
 
-        ml_verdict = "Phishing" if prob_phishing >= UMBRAL_OPTIMO else "Safe"
-        
-        malicious_attachments = False # Fijo a False
-
-        prediction = [{
-            "model_prediction": {
-                "label": ml_verdict, 
-                "malicious_file": malicious_attachments, 
-                "probability": convert_to_float(prob_phishing)
+        return {
+            "status": "OK",
+            "predictions": [{
+                "model_prediction": {
+                    "label": label,
+                    "probability": phishing_prob,
+                    "malicious_file": False 
+                }
+            }],
+            "metadata": {
+                "message_id": email_data.MessageId,
+                "threshold_used": threshold,
+                "timestamp": pd.Timestamp.now().isoformat()
             }
-        }]
-
-        return {"status": "OK", "predictions": prediction}
+        }
 
     except Exception as e:
-        # Log del error en el contenedor
-        print(f"Error en la predicción: {e}")
+        print(f"❌ ERROR INTERNO EN /PREDICT: {e}")
         import traceback
-        traceback.print_exc() # Imprime el stack trace completo para depuración
-        # Retornar una respuesta JSON con código 500
-        raise HTTPException(status_code=500, detail={"status": "ERROR", "message": f"Error interno del servidor: {e}"})
-    
-# =============================================================================
-# 5. ENDPOINT DE ESTADO
-# =============================================================================
-
-@app.get("/health")
-def read_root():
-    """Endpoint simple para verificar que la API está viva."""
-    return {"status": "OK", "message": "Phishing Detection API running."}
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Error interno del servidor de análisis: {str(e)}")
