@@ -11,6 +11,5 @@ transformers
 uvicorn
 xgboost
 pydantic[email]
-lightgbm
 category_encoders
 sentencepiece
