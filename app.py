@@ -5,15 +5,19 @@ import torch
 import pandas as pd
 import json
 import os
+from dotenv import load_dotenv
+load_dotenv()
+
 from urllib.parse import urlparse
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from transformers import XLMRobertaTokenizer, XLMRobertaModel
+from auth import auth_router, require_scope, TokenData
 
 # =============================================================================
-# CONFIGURACIÓN GLOBAL
+# CONFIGURACION GLOBAL
 # =============================================================================
 
 BERT_MODEL_NAME = 'xlm-roberta-base'
@@ -32,13 +36,10 @@ BERT_SEP_TOKEN = '[SEP]'
 ML_ARTIFACTS = {}
 
 def engineer_detailed_features(df_input):
-    """
-    Aplica la misma ingeniería de características que se usó durante el entrenamiento.
-    """
     df_eng = df_input.copy()
 
     for col in ['Subject', 'Body', 'From', 'Concatenated_URLs', 'Date']:
-         df_eng[col] = df_eng.get(col, MISSING_VALUE_STR).astype(str).fillna(MISSING_VALUE_STR)
+        df_eng[col] = df_eng.get(col, MISSING_VALUE_STR).astype(str).fillna(MISSING_VALUE_STR)
 
     df_eng['subject_perc_caps'] = df_eng['Subject'].apply(lambda x: sum(1 for c in str(x) if c.isupper()) / (len(str(x)) + 1e-6))
     df_eng['subject_kw_urgent'] = df_eng['Subject'].str.contains(r'urgent|URGENT|Important|IMPORTANTE', case=False).astype(int)
@@ -53,7 +54,8 @@ def engineer_detailed_features(df_input):
     df_eng['body_richness_category'] = pd.cut(richness, bins=[-1, 0.3, 0.7, 999], labels=['Low', 'Medium', 'High'], right=False).astype(str).fillna('Low')
 
     def get_domain(sender):
-        if not isinstance(sender, str) or '@' not in sender: return MISSING_VALUE_STR
+        if not isinstance(sender, str) or '@' not in sender:
+            return MISSING_VALUE_STR
         match = re.search(r'@([\w.-]+)', sender)
         return match.group(1) if match else MISSING_VALUE_STR
 
@@ -63,7 +65,8 @@ def engineer_detailed_features(df_input):
     df_eng['from_is_common_domain'] = df_eng['from_domain'].isin(common_domains).astype(int)
 
     def get_urls_list(text):
-        if not isinstance(text, str) or text == MISSING_VALUE_STR or not text.strip(): return []
+        if not isinstance(text, str) or text == MISSING_VALUE_STR or not text.strip():
+            return []
         return re.split(r'[,\s]+', text.strip())
 
     df_eng['url_list'] = df_eng['Concatenated_URLs'].apply(get_urls_list)
@@ -73,31 +76,37 @@ def engineer_detailed_features(df_input):
     df_eng['url_has_exe'] = df_eng['Concatenated_URLs'].str.contains(r'\.exe', case=False).astype(int)
 
     def avg_subdomains(urls):
-        if not urls: return 0
+        if not urls:
+            return 0
         count = 0
         valid_urls = 0
         for url_str in urls:
-            if len(url_str) < 5: continue 
+            if len(url_str) < 5:
+                continue
             try:
                 hostname = urlparse(url_str).hostname
                 if hostname:
                     count += hostname.count('.') - 1
                     valid_urls += 1
-            except: pass
+            except:
+                pass
         return count / valid_urls if valid_urls > 0 else 0
 
     def avg_path_len(urls):
-        if not urls: return 0
+        if not urls:
+            return 0
         length = 0
         valid_urls = 0
         for url_str in urls:
-             if len(url_str) < 5: continue
-             try:
-                 path = urlparse(url_str).path
-                 if path:
-                     length += len(path)
-                     valid_urls += 1
-             except: pass
+            if len(url_str) < 5:
+                continue
+            try:
+                path = urlparse(url_str).path
+                if path:
+                    length += len(path)
+                    valid_urls += 1
+            except:
+                pass
         return length / valid_urls if valid_urls > 0 else 0
 
     df_eng['url_avg_subdomains'] = df_eng['url_list'].apply(avg_subdomains)
@@ -106,93 +115,96 @@ def engineer_detailed_features(df_input):
     df_eng['Hour'] = df_eng['Date_dt'].dt.hour.fillna(0).astype(float)
 
     df_eng.replace([np.inf, -np.inf], 0, inplace=True)
-    df_eng.fillna(0, inplace=True) 
+    df_eng.fillna(0, inplace=True)
 
     return df_eng
 
 # =============================================================================
-# CICLO DE VIDA DE LA APLICACIÓN (Lifespan)
+# CICLO DE VIDA
 # =============================================================================
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Maneja la carga inicial de modelos (startup) y la limpieza (shutdown).
-    """
-    print("🚀 [STARTUP] Iniciando SecureMail API...")
+    print("Iniciando SecureMail API...")
     try:
         ML_ARTIFACTS['model'] = joblib.load(MODEL_PATH)
-        print(f"✅ Modelo cargado desde {MODEL_PATH}")
-        
+        print("Modelo cargado desde " + MODEL_PATH)
+
         ML_ARTIFACTS['pipeline'] = joblib.load(PIPELINE_PATH)
-        print(f"✅ Pipeline estructurado cargado desde {PIPELINE_PATH}")
+        print("Pipeline cargado desde " + PIPELINE_PATH)
 
         if os.path.exists(METRICS_PATH):
             with open(METRICS_PATH, 'r') as f:
                 metrics = json.load(f)
             ML_ARTIFACTS['threshold'] = metrics.get('final_threshold', 0.5)
-            print(f"✅ Umbral de decisión cargado: {ML_ARTIFACTS['threshold']}")
+            print("Umbral de decision cargado: " + str(ML_ARTIFACTS['threshold']))
         else:
-            print("⚠️ Archivo de métricas no encontrado. Usando umbral por defecto 0.5.")
+            print("Archivo de metricas no encontrado. Usando umbral 0.5.")
             ML_ARTIFACTS['threshold'] = 0.5
 
-        print("⏳ Cargando BERT (esto puede tardar un poco)...")
+        print("Cargando BERT...")
         ML_ARTIFACTS['tokenizer'] = XLMRobertaTokenizer.from_pretrained(BERT_MODEL_NAME)
         ML_ARTIFACTS['bert'] = XLMRobertaModel.from_pretrained(BERT_MODEL_NAME).to(DEVICE).eval()
-        print(f"✅ BERT cargado correctamente en {DEVICE}.")
+        print("BERT cargado en " + str(DEVICE))
 
     except Exception as e:
-        print(f"❌ ERROR CRÍTICO DURANTE EL STARTUP: {e}")
+        print("ERROR CRITICO EN STARTUP: " + str(e))
         raise RuntimeError("Fallo al inicializar los modelos de ML.") from e
-    
-    yield 
+
+    yield
 
     ML_ARTIFACTS.clear()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-    print("🛑 [SHUTDOWN] API detenida y recursos liberados.")
+    print("API detenida y recursos liberados.")
+
+# =============================================================================
+# APP
+# =============================================================================
 
 app = FastAPI(title="SecureMail Phishing Detection API", version="2.0", lifespan=lifespan)
 
+app.include_router(auth_router)
+
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["POST", "GET"],
+    allow_headers=["Content-Type", "X-API-Key", "Authorization"],
 )
 
 # =============================================================================
-# MODELOS DE DATOS (Pydantic)
+# MODELOS DE DATOS
 # =============================================================================
+
 class EmailInput(BaseModel):
-    """Define la estructura esperada del JSON que envía el complemento de Gmail."""
     From: str = Field(..., description="Remitente del correo")
     To: str = Field(..., description="Destinatario del correo")
     Subject: str = Field(..., description="Asunto del correo")
-    Body: str = Field(..., description="Cuerpo del correo en texto plano")
-    Date: str = Field(..., description="Fecha de recepción")
-    Concatenated_URLs: str = Field("", description="URLs extraídas del cuerpo, separadas por espacios o comas")
-    MessageId: str = Field(..., description="ID único del mensaje para trazabilidad")
+    Body: str = Field(..., max_length=100000, description="Cuerpo del correo en texto plano")
+    Date: str = Field(..., description="Fecha de recepcion")
+    Concatenated_URLs: str = Field("", max_length=10000, description="URLs extraidas del cuerpo")
+    MessageId: str = Field(..., description="ID unico del mensaje")
 
 # =============================================================================
-# ENDPOINTS DE LA API
+# ENDPOINTS
 # =============================================================================
+
 @app.get("/health")
 def health_check():
-    """Endpoint simple para verificar que la API está activa y los modelos cargados."""
     return {
         "status": "online",
-        "device_used": str(DEVICE),
         "models_loaded": bool(ML_ARTIFACTS),
-        "current_threshold": ML_ARTIFACTS.get('threshold')
     }
 
 @app.post("/predict")
-async def predict(email_data: EmailInput):
-    """
-    Endpoint principal de predicción. Recibe los datos del correo, aplica
-    toda la ingeniería de características y devuelve un veredicto de phishing.
-    """
+async def predict(
+    email_data: EmailInput,
+    token_data: TokenData = Depends(require_scope("predict"))
+):
     if not ML_ARTIFACTS:
         raise HTTPException(status_code=503, detail="Servicio no inicializado correctamente.")
 
@@ -202,10 +214,9 @@ async def predict(email_data: EmailInput):
 
         try:
             X_structured = ML_ARTIFACTS['pipeline'].transform(df_engineered)
-            X_structured = X_structured.astype(np.float32) 
+            X_structured = X_structured.astype(np.float32)
         except Exception as e:
-            print(f"Error en preprocesamiento estructurado: {e}")
-            raise HTTPException(status_code=400, detail="Error al procesar las características del correo.")
+            raise HTTPException(status_code=400, detail="Error al procesar las caracteristicas del correo.")
 
         text_parts = [
             str(df_engineered.iloc[0].get('From', MISSING_VALUE_STR)),
@@ -215,7 +226,7 @@ async def predict(email_data: EmailInput):
             str(df_engineered.iloc[0].get('Body', MISSING_VALUE_STR)),
             str(df_engineered.iloc[0].get('Concatenated_URLs', MISSING_VALUE_STR))
         ]
-        full_text = f" {BERT_SEP_TOKEN} ".join(text_parts)
+        full_text = (" " + BERT_SEP_TOKEN + " ").join(text_parts)
 
         bert_inputs = ML_ARTIFACTS['tokenizer'](
             full_text,
@@ -227,12 +238,11 @@ async def predict(email_data: EmailInput):
 
         with torch.no_grad():
             bert_outputs = ML_ARTIFACTS['bert'](**bert_inputs)
-        
+
         X_bert = bert_outputs.last_hidden_state[:, 0, :].cpu().numpy()
         X_final = np.hstack([X_bert, X_structured])
 
         phishing_prob = float(ML_ARTIFACTS['model'].predict_proba(X_final)[0][1])
-
         threshold = ML_ARTIFACTS['threshold']
         label = "Phishing" if phishing_prob >= threshold else "Safe"
 
@@ -242,18 +252,20 @@ async def predict(email_data: EmailInput):
                 "model_prediction": {
                     "label": label,
                     "probability": phishing_prob,
-                    "malicious_file": False 
+                    "malicious_file": None,
+                    "file_analysis": "not_supported"
                 }
             }],
             "metadata": {
                 "message_id": email_data.MessageId,
                 "threshold_used": threshold,
-                "timestamp": pd.Timestamp.now().isoformat()
+                "timestamp": pd.Timestamp.now().isoformat(),
+                "analyzed_by": token_data.client_id
             }
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"❌ ERROR INTERNO EN /PREDICT: {e}")
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Error interno del servidor de análisis: {str(e)}")
+        print("ERROR en /predict | MessageId=" + email_data.MessageId + " | " + type(e).__name__)
+        raise HTTPException(status_code=500, detail="Error interno del servidor.")
