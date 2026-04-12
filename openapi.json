@@ -1,119 +1,436 @@
-openapi: 3.0.0
-info:
-  title: SecureMail API
-  version: 1.0.0
-  description: API para detectar correos electrónicos de phishing usando machine learning.
-paths:
-  /health:
-    get:
-      summary: Verifica el estado inicial de la API
-      operationId: rootCheck
-      responses:
-        '200':
-          description: API en funcionamiento
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                    example: OK
-                  message:
-                    type: string
-                    example: Phishing Detection API running.
-  /predict:
-    post:
-      summary: Predice si un correo es phishing o no
-      operationId: predictEmail
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/EmailData'
-      responses:
-        '200':
-          description: Predicción realizada correctamente
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PredictionResponse'
-        '500':
-          description: Error interno del servidor
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                    example: ERROR
-                  message:
-                    type: string
-                    example: 'Error interno del servidor: <exception_details>'
-components:
-  schemas:
-    EmailData:
-      type: object
-      required:
-        - From
-        - To
-        - Subject
-        - Body
-        - Date
-        - Concatenated_URLs
-        - MessageId
-      properties:
-        From:
-          type: string
-          description: Dirección de correo del remitente.
-          example: sender@company.com
-        To:
-          type: string
-          description: Dirección de correo del destinatario.
-          example: recipient@company.com
-        Subject:
-          type: string
-          description: Asunto del correo.
-        Body:
-          type: string
-          description: Cuerpo del correo (texto plano).
-        Date:
-          type: string
-          format: date-time
-          description: Fecha y hora del correo en formato ISO 8601 (ej. 2025-10-15T10:00:00Z).
-        MessageId:
-          type: string
-          description: ID único del mensaje de Gmail.
-        Concatenated_URLs:
-          type: string
-          description: URLs extraídas del cuerpo del mensaje, concatenadas por espacio.
-          default: No Data
-    PredictionResponse:
-      type: object
-      properties:
-        status:
-          type: string
-          example: OK
-        predictions:
-          type: array
-          items:
-            type: object
-            properties:
-              model_prediction:
-                type: object
-                properties:
-                  label:
-                    type: string
-                    description: 'Veredicto: ''Phishing'' o ''Safe''.'
-                    example: Phishing
-                  malicious_file:
-                    type: boolean
-                    description: Indica si se detectaron adjuntos maliciosos (fijado a 'false' en esta versión).
-                    example: false
-                  probability:
-                    type: number
-                    format: float
-                    description: Probabilidad del modelo de que el correo sea Phishing (clase 1).
-                    example: 0.9997
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "SecureMail Phishing Detection API",
+    "version": "2.0",
+    "description": "API para detección de phishing en correos electrónicos mediante modelos de ML (XLM-RoBERTa + clasificador supervisado). Soporta autenticación por API Key o JWT Bearer token con control de scopes y rate limiting por IP."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8000",
+      "description": "Servidor local de desarrollo"
+    }
+  ],
+  "tags": [
+    { "name": "health", "description": "Estado del servicio" },
+    { "name": "prediction", "description": "Análisis y predicción de phishing" },
+    { "name": "auth", "description": "Autenticación y obtención de JWT" }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": ["health"],
+        "summary": "Health check",
+        "description": "Comprueba que la API está activa y que los modelos de ML están cargados en memoria.",
+        "operationId": "health_check",
+        "responses": {
+          "200": {
+            "description": "Servicio operativo",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HealthResponse" },
+                "example": {
+                  "status": "online",
+                  "models_loaded": true
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/predict": {
+      "post": {
+        "tags": ["prediction"],
+        "summary": "Analizar correo electrónico",
+        "description": "Recibe los campos de un correo electrónico y devuelve una predicción de phishing con su probabilidad, etiqueta y metadatos del análisis.\n\nRequiere autenticación con el scope `predict`.",
+        "operationId": "predict_email",
+        "security": [
+          { "ApiKeyAuth": [] },
+          { "BearerAuth": [] }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/EmailInput" },
+              "example": {
+                "From": "support@paypa1-secure.com",
+                "To": "user@example.com",
+                "Subject": "URGENT: Verify your account now",
+                "Body": "Dear customer, your account has been compromised. Please verify your password immediately.",
+                "Date": "2024-06-01T10:30:00Z",
+                "Concatenated_URLs": "http://192.168.1.1/verify.exe, http://click.here@evil.com/reset",
+                "MessageId": "msg-abc-12345"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Predicción realizada con éxito",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PredictResponse" },
+                "example": {
+                  "status": "OK",
+                  "predictions": [
+                    {
+                      "model_prediction": {
+                        "label": "Phishing",
+                        "probability": 0.9731,
+                        "malicious_file": null,
+                        "file_analysis": "not_supported"
+                      }
+                    }
+                  ],
+                  "metadata": {
+                    "message_id": "msg-abc-12345",
+                    "threshold_used": 0.5,
+                    "timestamp": "2024-06-01T10:31:00.123456",
+                    "analyzed_by": "my_client_app"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Error al procesar las características del correo",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPError" },
+                "example": { "detail": "Error al procesar las caracteristicas del correo." }
+              }
+            }
+          },
+          "401": {
+            "description": "No autenticado o token inválido",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPError" },
+                "example": { "detail": "Autenticación requerida. Usa X-API-Key o Bearer token." }
+              }
+            }
+          },
+          "403": {
+            "description": "Scope insuficiente",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPError" },
+                "example": { "detail": "Permiso insuficiente. Se requiere scope: 'predict'." }
+              }
+            }
+          },
+          "422": {
+            "description": "Validación fallida (campos requeridos ausentes o formato incorrecto)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ValidationError" }
+              }
+            }
+          },
+          "429": {
+            "description": "Demasiadas peticiones desde la misma IP",
+            "headers": {
+              "Retry-After": {
+                "schema": { "type": "integer" },
+                "description": "Segundos hasta que se pueda reintentar"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPError" },
+                "example": { "detail": "Demasiadas peticiones. Inténtalo más tarde." }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno del servidor",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPError" },
+                "example": { "detail": "Error interno del servidor." }
+              }
+            }
+          },
+          "503": {
+            "description": "Modelos no inicializados aún",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPError" },
+                "example": { "detail": "Servicio no inicializado correctamente." }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/token": {
+      "post": {
+        "tags": ["auth"],
+        "summary": "Obtener JWT de acceso",
+        "description": "Intercambia un `client_id` y `client_secret` por un JWT con validez de 24 horas y el scope `predict`.\n\nEl body debe enviarse como `application/x-www-form-urlencoded` (formato estándar OAuth2 Password Flow).\n\n```bash\ncurl -X POST http://localhost:8000/auth/token \\\n  -d \"username=mi_cliente&password=mi_secret\"\n```",
+        "operationId": "login",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "required": ["username", "password"],
+                "properties": {
+                  "username": {
+                    "type": "string",
+                    "description": "client_id registrado en AUTHORIZED_CLIENTS"
+                  },
+                  "password": {
+                    "type": "string",
+                    "description": "client_secret correspondiente"
+                  },
+                  "grant_type": {
+                    "type": "string",
+                    "default": "password",
+                    "description": "Tipo de grant OAuth2 (fijo: password)"
+                  },
+                  "scope": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Scopes solicitados (actualmente el servidor asigna 'predict' automáticamente)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Token emitido correctamente",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TokenResponse" },
+                "example": {
+                  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+                  "token_type": "bearer",
+                  "expires_in": 86400
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Credenciales incorrectas",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPError" },
+                "example": { "detail": "Credenciales incorrectas." }
+              }
+            }
+          },
+          "422": {
+            "description": "Cuerpo de la petición mal formado",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ValidationError" }
+              }
+            }
+          },
+          "429": {
+            "description": "Demasiadas peticiones desde la misma IP",
+            "headers": {
+              "Retry-After": {
+                "schema": { "type": "integer" }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/HTTPError" },
+                "example": { "detail": "Demasiadas peticiones. Inténtalo más tarde." }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key",
+        "description": "API Key del cliente. Se verifica contra el hash bcrypt almacenado en AUTHORIZED_CLIENTS. Al validarse, otorga automáticamente el scope `predict`."
+      },
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "JWT obtenido desde `/auth/token`. El token incluye `sub` (client_id), `scopes`, `exp`, `iat` y un `jti` único para revocación futura."
+      }
+    },
+    "schemas": {
+      "EmailInput": {
+        "type": "object",
+        "required": ["From", "To", "Subject", "Body", "Date", "MessageId"],
+        "properties": {
+          "From": {
+            "type": "string",
+            "description": "Dirección del remitente (puede incluir nombre y email, ej: 'Name <addr@domain.com>')"
+          },
+          "To": {
+            "type": "string",
+            "description": "Dirección del destinatario"
+          },
+          "Subject": {
+            "type": "string",
+            "description": "Asunto del correo"
+          },
+          "Body": {
+            "type": "string",
+            "maxLength": 100000,
+            "description": "Cuerpo del correo en texto plano (sin HTML)"
+          },
+          "Date": {
+            "type": "string",
+            "description": "Fecha de recepción. Se recomienda formato ISO 8601 (ej: '2024-06-01T10:30:00Z')"
+          },
+          "Concatenated_URLs": {
+            "type": "string",
+            "maxLength": 10000,
+            "default": "",
+            "description": "URLs extraídas del cuerpo del correo, separadas por coma o espacio"
+          },
+          "MessageId": {
+            "type": "string",
+            "description": "Identificador único del mensaje (se devuelve en los metadatos de la respuesta)"
+          }
+        }
+      },
+      "ModelPrediction": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string",
+            "enum": ["Phishing", "Safe"],
+            "description": "Etiqueta final basada en la probabilidad vs. el umbral de decisión"
+          },
+          "probability": {
+            "type": "number",
+            "format": "float",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Probabilidad de que el correo sea phishing (clase positiva)"
+          },
+          "malicious_file": {
+            "type": ["string", "null"],
+            "description": "Nombre del archivo malicioso detectado (actualmente siempre null)"
+          },
+          "file_analysis": {
+            "type": "string",
+            "example": "not_supported",
+            "description": "Estado del análisis de archivos adjuntos"
+          }
+        }
+      },
+      "PredictionItem": {
+        "type": "object",
+        "properties": {
+          "model_prediction": { "$ref": "#/components/schemas/ModelPrediction" }
+        }
+      },
+      "PredictMetadata": {
+        "type": "object",
+        "properties": {
+          "message_id": {
+            "type": "string",
+            "description": "MessageId recibido en la petición"
+          },
+          "threshold_used": {
+            "type": "number",
+            "format": "float",
+            "description": "Umbral de decisión aplicado (cargado desde validation_metrics.json o 0.5 por defecto)"
+          },
+          "timestamp": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Timestamp ISO 8601 del momento del análisis"
+          },
+          "analyzed_by": {
+            "type": "string",
+            "description": "client_id extraído del token de autenticación"
+          }
+        }
+      },
+      "PredictResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "example": "OK"
+          },
+          "predictions": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/PredictionItem" }
+          },
+          "metadata": { "$ref": "#/components/schemas/PredictMetadata" }
+        }
+      },
+      "HealthResponse": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "example": "online"
+          },
+          "models_loaded": {
+            "type": "boolean",
+            "description": "true si los artefactos ML (modelo, pipeline, tokenizer, BERT) están en memoria"
+          }
+        }
+      },
+      "TokenResponse": {
+        "type": "object",
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "description": "JWT firmado con HS256"
+          },
+          "token_type": {
+            "type": "string",
+            "example": "bearer"
+          },
+          "expires_in": {
+            "type": "integer",
+            "description": "Segundos hasta la expiración (configurable vía JWT_EXPIRE_MINUTES, por defecto 86400)"
+          }
+        }
+      },
+      "HTTPError": {
+        "type": "object",
+        "properties": {
+          "detail": {
+            "type": "string",
+            "description": "Mensaje descriptivo del error"
+          }
+        }
+      },
+      "ValidationError": {
+        "type": "object",
+        "properties": {
+          "detail": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "loc": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                },
+                "msg": { "type": "string" },
+                "type": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
