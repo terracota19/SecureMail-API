@@ -20,6 +20,7 @@ RUN python -c "from transformers import XLMRobertaTokenizer, XLMRobertaModel; XL
 USER root
 
 COPY app.py .
+COPY auth.py .
 COPY models/ ./models/
 COPY objects/ ./objects/
 COPY Metrics/ ./Metrics/
