@@ -15,6 +15,7 @@ ENV HF_HOME=/secure.mail/cache
 
 USER appuser
 
+
 RUN python -c "from transformers import XLMRobertaTokenizer, XLMRobertaModel; XLMRobertaTokenizer.from_pretrained('xlm-roberta-base'); XLMRobertaModel.from_pretrained('xlm-roberta-base')"
 
 USER root
