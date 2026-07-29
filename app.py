@@ -120,7 +120,7 @@ def engineer_detailed_features(df_input):
     return df_eng
 
 # =============================================================================
-# CICLO DE VIDA
+# CICLO DE VIDA (OPTIMIZADO PARA MEMORIA RAM)
 # =============================================================================
 
 @asynccontextmanager
@@ -142,10 +142,22 @@ async def lifespan(app: FastAPI):
             print("Archivo de metricas no encontrado. Usando umbral 0.5.")
             ML_ARTIFACTS['threshold'] = 0.5
 
-        print("Cargando BERT...")
-        ML_ARTIFACTS['tokenizer'] = XLMRobertaTokenizer.from_pretrained(BERT_MODEL_NAME)
-        ML_ARTIFACTS['bert'] = XLMRobertaModel.from_pretrained(BERT_MODEL_NAME).to(DEVICE).eval()
-        print("BERT cargado en " + str(DEVICE))
+        print("Cargando BERT optimizado para RAM...")
+        # Carga desde la caché descargada previamente en el Dockerfile
+        ML_ARTIFACTS['tokenizer'] = XLMRobertaTokenizer.from_pretrained(
+            BERT_MODEL_NAME, 
+            local_files_only=True
+        )
+        
+        # Carga el modelo usando float16 y low_cpu_mem_usage para no exceder los 512 MB de RAM
+        ML_ARTIFACTS['bert'] = XLMRobertaModel.from_pretrained(
+            BERT_MODEL_NAME,
+            torch_dtype=torch.float16,
+            low_cpu_mem_usage=True,
+            local_files_only=True
+        ).to(DEVICE).eval()
+        
+        print("BERT cargado con éxito en " + str(DEVICE))
 
     except Exception as e:
         print("ERROR CRITICO EN STARTUP: " + str(e))
@@ -189,9 +201,9 @@ class EmailInput(BaseModel):
     Concatenated_URLs: str = Field("", max_length=10000, description="URLs extraidas del cuerpo")
     MessageId: str = Field(..., description="ID unico del mensaje")
 
-class Config:
+    class Config:
         extra = "ignore"
-        
+
 # =============================================================================
 # ENDPOINTS
 # =============================================================================
@@ -242,7 +254,8 @@ async def predict(
         with torch.no_grad():
             bert_outputs = ML_ARTIFACTS['bert'](**bert_inputs)
 
-        X_bert = bert_outputs.last_hidden_state[:, 0, :].cpu().numpy()
+        # Se convierte a float32 y a numpy para que coincida con las entradas del modelo final
+        X_bert = bert_outputs.last_hidden_state[:, 0, :].to(torch.float32).cpu().numpy()
         X_final = np.hstack([X_bert, X_structured])
 
         phishing_prob = float(ML_ARTIFACTS['model'].predict_proba(X_final)[0][1])
