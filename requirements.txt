@@ -9,10 +9,10 @@ slowapi
 joblib
 numpy
 pandas
-scikit-learn
 torch
 transformers
 huggingface-hub
 sentencepiece
 xgboost
 category_encoders
+scikit-learn==1.6.1
