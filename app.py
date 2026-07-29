@@ -189,6 +189,9 @@ class EmailInput(BaseModel):
     Concatenated_URLs: str = Field("", max_length=10000, description="URLs extraidas del cuerpo")
     MessageId: str = Field(..., description="ID unico del mensaje")
 
+class Config:
+        extra = "ignore"
+        
 # =============================================================================
 # ENDPOINTS
 # =============================================================================
