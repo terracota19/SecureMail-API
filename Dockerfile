@@ -22,8 +22,6 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
-RUN python -c "from transformers import AutoTokenizer, AutoModel; AutoTokenizer.from_pretrained('xlm-roberta-base'); AutoModel.from_pretrained('xlm-roberta-base')"
-
 COPY . ./
 
 RUN mkdir -p /secure.mail/.cache/huggingface && \
@@ -31,6 +29,6 @@ RUN mkdir -p /secure.mail/.cache/huggingface && \
 
 USER appuser
 
-EXPOSE 8000
+EXPOSE 10000
 
-CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT:-10000} --workers 1 --limit-concurrency 5"]
+CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT:-10000} --workers 1 --limit-concurrency 1"]
