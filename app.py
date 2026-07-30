@@ -1,391 +1,278 @@
-import os
-import gc
 import re
-import glob
-import json
-import email
-from email import policy
-from email.parser import BytesParser
-from urllib.parse import urlparse
-from time import time
-
-import numpy as np
-import pandas as pd
-from tqdm import tqdm
-
-import torch
-from torch.cuda.amp import autocast
-from transformers import XLMRobertaTokenizer, XLMRobertaModel
-
-from sklearn.preprocessing import StandardScaler, LabelEncoder
-from category_encoders import HashingEncoder
-from sklearn.model_selection import StratifiedKFold, GridSearchCV
-from sklearn.metrics import precision_recall_curve, f1_score, classification_report
 import joblib
+import numpy as np
+import torch
+import pandas as pd
+import json
+import os
+from dotenv import load_dotenv
+load_dotenv()
 
-from fastapi import FastAPI
+from urllib.parse import urlparse
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, HTTPException, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+from transformers import XLMRobertaTokenizer, XLMRobertaModel
+from auth import auth_router, require_scope, TokenData
 
-try:
-    from bs4 import BeautifulSoup
-    BS4_AVAILABLE = True
-except ImportError:
-    BS4_AVAILABLE = False
+# =============================================================================
+# CONFIGURACION GLOBAL
+# =============================================================================
 
-try:
-    import config
-except ImportError:
-    class ConfigDummy:
-        MISSING_VALUE_STR = "No Data"
-        TARGET_COLUMN = "Phishing"
-        TIME_FEATURE = "Hour"
-        CATEGORICAL_FEATURES = ["From", "To", "Subject"]
-        EXPECTED_PARSED_COLS = ["From", "To", "Subject", "Date", "Body", "Concatenated_URLs", "Phishing"]
-        BERT_MODEL_NAME = "xlm-roberta-base"
-        DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        BATCH_SIZE = 32
-        MAX_LENGTH = 512
-        OPTUNA_AVAILABLE = False
-    config = ConfigDummy()
+BERT_MODEL_NAME = 'xlm-roberta-base'
+MAX_LENGTH = 128
+EMBEDDING_DIM = 768
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-def create_concatenated_urls(url_value):
-    missing_val_str = config.MISSING_VALUE_STR
-    if pd.isna(url_value) or str(url_value).strip().lower() in ['0', '0.0', '', 'nan', 'none']:
-        return missing_val_str
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = os.path.join(BASE_DIR, 'models/best_phishing_model.joblib')
+PIPELINE_PATH = os.path.join(BASE_DIR, 'objects/feature_scaler.joblib')
+METRICS_PATH = os.path.join(BASE_DIR, 'Metrics/validation_metrics.json')
 
-    url_str = str(url_value).strip()
-    url_str = re.sub(r'\\n|\\r', ' ', url_str)
-    url_str = re.sub(r'[\[\]\'"]', '', url_str)
-    url_str = re.sub(r'\s+', ' ', url_str).strip()
+MISSING_VALUE_STR = 'No Data'
+BERT_SEP_TOKEN = '[SEP]'
 
-    if url_str == '1':
-        return missing_val_str
+ML_ARTIFACTS = {}
 
-    url_str = re.sub(r'(https?://)', r' \1', url_str).strip()
-    result = ' '.join(url_str.split())
-    return result if result else missing_val_str
+def engineer_detailed_features(df_input):
+    df_eng = df_input.copy()
 
-def load_and_combine_data(file_paths, expected_cols, target_col, missing_val_str=config.MISSING_VALUE_STR):
-    all_data = []
+    for col in ['Subject', 'Body', 'From', 'Concatenated_URLs', 'Date']:
+        df_eng[col] = df_eng.get(col, MISSING_VALUE_STR).astype(str).fillna(MISSING_VALUE_STR)
 
-    for file in tqdm(file_paths, desc="Cargando CSVs"):
-        try:
-            try:
-                df = pd.read_csv(file)
-            except UnicodeDecodeError:
-                df = pd.read_csv(file, encoding='latin1')
-            except pd.errors.ParserError:
-                df = pd.read_csv(file, encoding='latin1', on_bad_lines='skip')
-            all_data.append(df)
-        except Exception as e:
-            pass
+    df_eng['subject_perc_caps'] = df_eng['Subject'].apply(lambda x: sum(1 for c in str(x) if c.isupper()) / (len(str(x)) + 1e-6))
+    df_eng['subject_kw_urgent'] = df_eng['Subject'].str.contains(r'urgent|URGENT|Important|IMPORTANTE', case=False).astype(int)
 
-    if not all_data:
-        return pd.DataFrame()
+    df_eng['body_num_words'] = df_eng['Body'].apply(lambda x: len(str(x).split()))
+    df_eng['body_num_unique_words'] = df_eng['Body'].apply(lambda x: len(set(str(x).split())))
+    df_eng['body_perc_caps'] = df_eng['Body'].apply(lambda x: sum(1 for c in str(x) if c.isupper()) / (len(str(x)) + 1e-6))
+    df_eng['body_kw_sensitive'] = df_eng['Body'].str.contains(r'password|account|verify|bank|ssn|confidential', case=False).astype(int)
+    df_eng['Saludo_Generico'] = df_eng['Body'].str.contains(r'Dear user|Dear customer|Dear account holder', case=False).astype(int)
 
-    df_combined = pd.concat(all_data, ignore_index=True)
-    del all_data
-    gc.collect()
+    richness = df_eng['body_num_unique_words'] / (df_eng['body_num_words'] + 1e-6)
+    df_eng['body_richness_category'] = pd.cut(richness, bins=[-1, 0.3, 0.7, 999], labels=['Low', 'Medium', 'High'], right=False).astype(str).fillna('Low')
 
-    df_combined.columns = df_combined.columns.str.lower().str.replace('sender', 'from').str.replace('receiver', 'to').str.replace('label', 'phish')
-    column_mapping = {'subject': 'Subject', 'body': 'Body', 'date': 'Date', 'from': 'From', 'to': 'To', 'phish': target_col, 'urls': 'Original_URLs'}
-    df_combined.rename(columns=lambda c: column_mapping.get(c, c), inplace=True)
+    def get_domain(sender):
+        if not isinstance(sender, str) or '@' not in sender:
+            return MISSING_VALUE_STR
+        match = re.search(r'@([\w.-]+)', sender)
+        return match.group(1) if match else MISSING_VALUE_STR
 
-    for col in expected_cols:
-        if col not in df_combined.columns:
-            if col == 'urls' and 'Original_URLs' in df_combined.columns:
+    df_eng['from_domain'] = df_eng['From'].apply(get_domain)
+    df_eng['from_num_subdomains'] = df_eng['from_domain'].apply(lambda x: x.count('.') - 1 if x != MISSING_VALUE_STR else 0)
+    common_domains = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'aol.com']
+    df_eng['from_is_common_domain'] = df_eng['from_domain'].isin(common_domains).astype(int)
+
+    def get_urls_list(text):
+        if not isinstance(text, str) or text == MISSING_VALUE_STR or not text.strip():
+            return []
+        return re.split(r'[,\s]+', text.strip())
+
+    df_eng['url_list'] = df_eng['Concatenated_URLs'].apply(get_urls_list)
+    df_eng['url_count'] = df_eng['url_list'].apply(lambda x: len([u for u in x if len(u) > 1]))
+    df_eng['url_has_ip'] = df_eng['Concatenated_URLs'].str.contains(r'https?://\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}').astype(int)
+    df_eng['url_has_at'] = df_eng['Concatenated_URLs'].str.contains(r'@').astype(int)
+    df_eng['url_has_exe'] = df_eng['Concatenated_URLs'].str.contains(r'\.exe', case=False).astype(int)
+
+    def avg_subdomains(urls):
+        if not urls:
+            return 0
+        count = 0
+        valid_urls = 0
+        for url_str in urls:
+            if len(url_str) < 5:
                 continue
-            df_combined[col] = 0 if col == target_col else missing_val_str
-
-        if df_combined[col].dtype == object or col != target_col:
-            df_combined[col] = df_combined[col].fillna(missing_val_str).astype(str)
-        elif col == target_col:
-            df_combined[col] = pd.to_numeric(df_combined[col], errors='coerce').fillna(0).astype(np.int8)
-
-    if 'Original_URLs' in df_combined.columns:
-        df_combined['Concatenated_URLs'] = df_combined['Original_URLs'].apply(create_concatenated_urls)
-        df_combined.drop(columns=['Original_URLs'], inplace=True, errors='ignore')
-    elif 'Concatenated_URLs' not in df_combined.columns:
-        df_combined['Concatenated_URLs'] = missing_val_str
-
-    final_cols_order = [c for c in config.EXPECTED_PARSED_COLS if c in df_combined.columns]
-    df_combined = df_combined[final_cols_order].dropna(subset=[target_col])
-    
-    return df_combined
-
-def decode_payload(part):
-    payload = part.get_payload(decode=True)
-    if not payload:
-        return ""
-
-    charset = part.get_content_charset()
-    fallback_encodings = ['utf-8', 'latin-1', 'iso-8859-1', 'cp1252', 'ascii']
-
-    if charset:
-        try:
-            return payload.decode(charset, errors='replace')
-        except (LookupError, UnicodeDecodeError):
-            pass
-
-    for encoding in fallback_encodings:
-        try:
-            return payload.decode(encoding, errors='replace')
-        except UnicodeDecodeError:
-            continue
-
-    return payload.decode('ascii', errors='replace')
-
-def extract_body_from_eml(msg):
-    body_plain, body_html = None, None
-
-    if msg.is_multipart():
-        for part in msg.walk():
-            content_type = part.get_content_type()
-            content_disposition = str(part.get('Content-Disposition'))
-            if 'attachment' in content_disposition or not content_type.startswith('text/'):
-                continue
-            if content_type == 'text/plain' and body_plain is None:
-                body_plain = decode_payload(part)
-            elif content_type == 'text/html' and body_html is None:
-                body_html = decode_payload(part)
-    else:
-        content_type = msg.get_content_type()
-        if content_type == 'text/plain':
-            body_plain = decode_payload(msg)
-        elif content_type == 'text/html':
-            body_html = decode_payload(msg)
-
-    if body_plain:
-        return re.sub(r'\s+', ' ', body_plain).strip() or config.MISSING_VALUE_STR
-    elif body_html:
-        if BS4_AVAILABLE:
             try:
-                soup = BeautifulSoup(body_html, 'html.parser')
-                return re.sub(r'\s+', ' ', soup.get_text(separator=' ', strip=True)).strip() or config.MISSING_VALUE_STR
-            except Exception:
+                hostname = urlparse(url_str).hostname
+                if hostname:
+                    count += hostname.count('.') - 1
+                    valid_urls += 1
+            except:
                 pass
-        return re.sub(r'\s+', ' ', body_html).strip() or config.MISSING_VALUE_STR
+        return count / valid_urls if valid_urls > 0 else 0
 
-    return config.MISSING_VALUE_STR
+    def avg_path_len(urls):
+        if not urls:
+            return 0
+        length = 0
+        valid_urls = 0
+        for url_str in urls:
+            if len(url_str) < 5:
+                continue
+            try:
+                path = urlparse(url_str).path
+                if path:
+                    length += len(path)
+                    valid_urls += 1
+            except:
+                pass
+        return length / valid_urls if valid_urls > 0 else 0
 
-def parse_eml_file(file_path):
+    df_eng['url_avg_subdomains'] = df_eng['url_list'].apply(avg_subdomains)
+    df_eng['url_avg_path_len'] = df_eng['url_list'].apply(avg_path_len)
+    df_eng['Date_dt'] = pd.to_datetime(df_eng['Date'], errors='coerce', utc=True)
+    df_eng['Hour'] = df_eng['Date_dt'].dt.hour.fillna(0).astype(float)
+
+    df_eng.replace([np.inf, -np.inf], 0, inplace=True)
+    df_eng.fillna(0, inplace=True)
+
+    return df_eng
+
+# =============================================================================
+# CICLO DE VIDA
+# =============================================================================
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    print("Iniciando SecureMail API...")
     try:
-        with open(file_path, 'rb') as f:
-            msg = BytesParser(policy=policy.default).parse(f)
+        ML_ARTIFACTS['model'] = joblib.load(MODEL_PATH)
+        print("Modelo cargado desde " + MODEL_PATH)
 
-        return {
-            'From': re.sub(r'\s+', ' ', str(msg.get('From', config.MISSING_VALUE_STR))).strip(),
-            'To': re.sub(r'\s+', ' ', str(msg.get('To', config.MISSING_VALUE_STR))).strip(),
-            'Subject': re.sub(r'\s+', ' ', str(msg.get('Subject', config.MISSING_VALUE_STR))).strip(),
-            'Date': re.sub(r'\s+', ' ', str(msg.get('Date', config.MISSING_VALUE_STR))).strip(),
-            'Body': extract_body_from_eml(msg)
-        }
+        ML_ARTIFACTS['pipeline'] = joblib.load(PIPELINE_PATH)
+        print("Pipeline cargado desde " + PIPELINE_PATH)
+
+        if os.path.exists(METRICS_PATH):
+            with open(METRICS_PATH, 'r') as f:
+                metrics = json.load(f)
+            ML_ARTIFACTS['threshold'] = metrics.get('final_threshold', 0.5)
+            print("Umbral de decision cargado: " + str(ML_ARTIFACTS['threshold']))
+        else:
+            print("Archivo de metricas no encontrado. Usando umbral 0.5.")
+            ML_ARTIFACTS['threshold'] = 0.5
+
+        print("Cargando BERT...")
+        ML_ARTIFACTS['tokenizer'] = XLMRobertaTokenizer.from_pretrained(BERT_MODEL_NAME)
+        ML_ARTIFACTS['bert'] = XLMRobertaModel.from_pretrained(BERT_MODEL_NAME).to(DEVICE).eval()
+        print("BERT cargado en " + str(DEVICE))
+
     except Exception as e:
-        return None
+        print("ERROR CRITICO EN STARTUP: " + str(e))
+        raise RuntimeError("Fallo al inicializar los modelos de ML.") from e
 
-def extract_urls_from_body_text(body_text):
-    if not isinstance(body_text, str) or not body_text:
-        return config.MISSING_VALUE_STR
+    yield
 
-    url_pattern = re.compile(
-        r'(?:(?:https?|ftp):\/\/|www\.)'
-        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|'
-        r'localhost|\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'
-        r'(?::\d+)?(?:[/?]\S*)?', re.IGNORECASE
-    )
+    ML_ARTIFACTS.clear()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    print("API detenida y recursos liberados.")
 
-    urls = url_pattern.findall(body_text)
-    valid_urls = []
-    for url in urls:
-        if url.lower().startswith('www.'):
-            url = 'http://' + url
-        try:
-            parsed = urlparse(url)
-            if parsed.scheme in ['http', 'https', 'ftp'] and ('.' in parsed.netloc or parsed.netloc == 'localhost'):
-                valid_urls.append(re.sub(r'[.,)\]}>\'"?]+$', '', url.strip()))
-        except ValueError:
-            continue
+# =============================================================================
+# APP
+# =============================================================================
 
-    return ' '.join(valid_urls) if valid_urls else config.MISSING_VALUE_STR
+app = FastAPI(title="SecureMail Phishing Detection API", version="2.0", lifespan=lifespan)
 
-def process_eml_directory(dir_path, target_value=1):
-    eml_files = glob.glob(os.path.join(dir_path, '**', '*.eml'), recursive=True)
-    if not eml_files:
-        return pd.DataFrame(columns=config.EXPECTED_PARSED_COLS)
+app.include_router(auth_router)
 
-    all_email_data = []
-    for file_path in tqdm(eml_files, desc="Parseando EMLs"):
-        parsed_data = parse_eml_file(file_path)
-        if parsed_data:
-            parsed_data[config.TARGET_COLUMN] = target_value
-            all_email_data.append(parsed_data)
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
 
-    if not all_email_data:
-        return pd.DataFrame(columns=config.EXPECTED_PARSED_COLS)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["POST", "GET"],
+    allow_headers=["Content-Type", "X-API-Key", "Authorization"],
+)
 
-    df = pd.DataFrame(all_email_data)
-    del all_email_data
-    gc.collect()
+# =============================================================================
+# MODELOS DE DATOS
+# =============================================================================
 
-    df['Concatenated_URLs'] = df['Body'].astype(str).apply(extract_urls_from_body_text)
+class EmailInput(BaseModel):
+    From: str = Field(..., description="Remitente del correo")
+    To: str = Field(..., description="Destinatario del correo")
+    Subject: str = Field(..., description="Asunto del correo")
+    Body: str = Field(..., max_length=100000, description="Cuerpo del correo en texto plano")
+    Date: str = Field(..., description="Fecha de recepcion")
+    Concatenated_URLs: str = Field("", max_length=10000, description="URLs extraidas del cuerpo")
+    MessageId: str = Field(..., description="ID unico del mensaje")
 
-    for col in config.EXPECTED_PARSED_COLS:
-        if col not in df.columns:
-            df[col] = 0 if col == config.TARGET_COLUMN else config.MISSING_VALUE_STR
-        elif col == config.TARGET_COLUMN:
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(np.int8)
-        else:
-            df[col] = df[col].fillna(config.MISSING_VALUE_STR).astype(str)
-
-    return df[config.EXPECTED_PARSED_COLS]
-
-def extract_time_feature(df):
-    df_copy = df.copy()
-    if 'Date' in df_copy.columns:
-        date_dt = pd.to_datetime(df_copy['Date'], errors='coerce', utc=True)
-        df_copy[config.TIME_FEATURE] = date_dt.dt.hour.astype(np.float32).fillna(0.0)
-    else:
-        df_copy[config.TIME_FEATURE] = 0.0
-    return df_copy
-
-def fit_preprocess_additional_features(df_train):
-    df_processed = extract_time_feature(df_train)
-    label_encoders = {}
-    fitted_data_list = []
-    feature_names_for_scaler = []
-
-    N_HASH_COMPONENTS = 100
-    cols_to_hash = [col for col in config.CATEGORICAL_FEATURES if col in df_processed.columns]
-
-    hasher = HashingEncoder(cols=cols_to_hash, n_components=N_HASH_COMPONENTS, return_df=True)
-    df_processed_cat = df_processed[cols_to_hash].astype(str).fillna(config.MISSING_VALUE_STR)
-    
-    fitted_data_hashed = hasher.fit_transform(df_processed_cat)
-    del df_processed_cat
-    gc.collect()
-
-    label_encoders['feature_hasher'] = hasher
-
-    if not fitted_data_hashed.empty:
-        fitted_data_list.append(fitted_data_hashed.values.astype(np.float32))
-        feature_names_for_scaler.extend(list(fitted_data_hashed.columns))
-        del fitted_data_hashed
-
-    if config.TIME_FEATURE in df_processed.columns:
-        time_vals = df_processed[[config.TIME_FEATURE]].fillna(0).values.astype(np.float32)
-        fitted_data_list.append(time_vals)
-        feature_names_for_scaler.append(config.TIME_FEATURE)
-
-    target_encoder = LabelEncoder()
-    target_encoder.fit(df_train[config.TARGET_COLUMN].values)
-    label_encoders['target_encoder'] = target_encoder
-
-    features_to_scale = np.hstack(fitted_data_list)
-    del fitted_data_list
-    gc.collect()
-
-    scaler = StandardScaler()
-    scaled_data = scaler.fit_transform(features_to_scale).astype(np.float32)
-    scaler.feature_names_in_ = np.array(feature_names_for_scaler, dtype=object)
-
-    return scaled_data, label_encoders, scaler
-
-def transform_preprocess_additional_features(df, label_encoders, scaler):
-    df_processed = extract_time_feature(df)
-    hasher = label_encoders['feature_hasher']
-    cols_to_hash = [col for col in config.CATEGORICAL_FEATURES if col in df_processed.columns]
-    num_hash_cols_expected = len([f for f in scaler.feature_names_in_ if str(f).startswith('col_')])
-
-    if not cols_to_hash:
-        transformed_data_hashed_values = np.zeros((len(df_processed), num_hash_cols_expected), dtype=np.float32)
-    else:
-        df_processed_cat = df_processed[cols_to_hash].astype(str).fillna(config.MISSING_VALUE_STR)
-        transformed_data_hashed = hasher.transform(df_processed_cat)
-        transformed_data_hashed_values = transformed_data_hashed.values.astype(np.float32)
-        del df_processed_cat, transformed_data_hashed
-        gc.collect()
-
-        if transformed_data_hashed_values.shape[1] < num_hash_cols_expected:
-            pad = num_hash_cols_expected - transformed_data_hashed_values.shape[1]
-            transformed_data_hashed_values = np.pad(transformed_data_hashed_values, ((0, 0), (0, pad)))
-        else:
-            transformed_data_hashed_values = transformed_data_hashed_values[:, :num_hash_cols_expected]
-
-    features_list = [transformed_data_hashed_values]
-
-    if config.TIME_FEATURE in scaler.feature_names_in_:
-        if config.TIME_FEATURE in df_processed.columns:
-            time_vals = df_processed[[config.TIME_FEATURE]].fillna(0).values.astype(np.float32)
-        else:
-            time_vals = np.zeros((len(df_processed), 1), dtype=np.float32)
-        features_list.append(time_vals)
-
-    features_to_scale = np.hstack(features_list)
-    return scaler.transform(features_to_scale).astype(np.float32)
-
-def set_dynamic_model_weights(y_train, models_tune, models_no_tune):
-    counts = np.bincount(y_train)
-    xgb_scale_weight = float(counts[0] / counts[1]) if len(counts) > 1 and counts[1] > 0 else 1.0
-
-    for model_dict in [models_tune, models_no_tune]:
-        if 'XGBoost' in model_dict:
-            try:
-                model_dict['XGBoost'].set_params(scale_pos_weight=xgb_scale_weight)
-            except Exception as e:
-                pass
-
-def get_bert_model_and_tokenizer():
-    tokenizer = XLMRobertaTokenizer.from_pretrained(config.BERT_MODEL_NAME)
-    model = XLMRobertaModel.from_pretrained(config.BERT_MODEL_NAME)
-    model.to(config.DEVICE)
-    model.eval()
-    return tokenizer, model
-
-def generate_bert_embeddings(texts, tokenizer, model):
-    if not texts:
-        return np.empty((0, 768), dtype=np.float32)
-
-    embeddings = []
-    use_cuda = config.DEVICE.type == 'cuda'
-    dtype = torch.float16 if use_cuda else torch.float32
-
-    with torch.no_grad():
-        with autocast(enabled=use_cuda, dtype=dtype):
-            for i in tqdm(range(0, len(texts), config.BATCH_SIZE), desc="Generando Embeddings"):
-                batch_texts = [str(t) for t in texts[i:i + config.BATCH_SIZE]]
-                
-                encoded = tokenizer.batch_encode_plus(
-                    batch_texts,
-                    padding=True,
-                    truncation=True,
-                    max_length=config.MAX_LENGTH,
-                    return_tensors='pt'
-                ).to(config.DEVICE)
-
-                outputs = model(**encoded)
-                
-                mask = encoded['attention_mask'].unsqueeze(-1).expand(outputs.last_hidden_state.size()).float()
-                sum_emb = torch.sum(outputs.last_hidden_state * mask, 1)
-                sum_mask = torch.clamp(mask.sum(1), min=1e-9)
-                mean_pooled = (sum_emb / sum_mask).cpu().numpy().astype(np.float32)
-
-                embeddings.append(mean_pooled)
-
-                del encoded, outputs, mask, sum_emb, sum_mask
-                if use_cuda:
-                    torch.cuda.empty_cache()
-
-    final_embeddings = np.vstack(embeddings)
-    del embeddings
-    gc.collect()
-    
-    return final_embeddings
-
-app = FastAPI(title="SecureMail Phishing Detection API", version="1.0")
+    class Config:
+        extra = "ignore"
+        
+# =============================================================================
+# ENDPOINTS
+# =============================================================================
 
 @app.get("/")
 def read_root():
-    return {"status": "online", "message": "API de detección de phishing activa"}
+    return {"status": "online", "message": "API SecureMail"}
 
 @app.get("/health")
 def health_check():
-    return {"status": "healthy"}
+    return {
+        "status": "online",
+        "models_loaded": bool(ML_ARTIFACTS),
+    }
+
+@app.post("/predict")
+async def predict(
+    email_data: EmailInput,
+    token_data: TokenData = Depends(require_scope("predict"))
+):
+    if not ML_ARTIFACTS:
+        raise HTTPException(status_code=503, detail="Servicio no inicializado correctamente.")
+
+    try:
+        df_raw = pd.DataFrame([email_data.model_dump()])
+        df_engineered = engineer_detailed_features(df_raw)
+
+        try:
+            X_structured = ML_ARTIFACTS['pipeline'].transform(df_engineered)
+            X_structured = X_structured.astype(np.float32)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail="Error al procesar las caracteristicas del correo.")
+
+        text_parts = [
+            str(df_engineered.iloc[0].get('From', MISSING_VALUE_STR)),
+            str(df_engineered.iloc[0].get('To', MISSING_VALUE_STR)),
+            str(df_engineered.iloc[0].get('Date', MISSING_VALUE_STR)),
+            str(df_engineered.iloc[0].get('Subject', MISSING_VALUE_STR)),
+            str(df_engineered.iloc[0].get('Body', MISSING_VALUE_STR)),
+            str(df_engineered.iloc[0].get('Concatenated_URLs', MISSING_VALUE_STR))
+        ]
+        full_text = (" " + BERT_SEP_TOKEN + " ").join(text_parts)
+
+        bert_inputs = ML_ARTIFACTS['tokenizer'](
+            full_text,
+            return_tensors="pt",
+            max_length=MAX_LENGTH,
+            truncation=True,
+            padding='max_length'
+        ).to(DEVICE)
+
+        with torch.no_grad():
+            bert_outputs = ML_ARTIFACTS['bert'](**bert_inputs)
+
+        X_bert = bert_outputs.last_hidden_state[:, 0, :].cpu().numpy()
+        X_final = np.hstack([X_bert, X_structured])
+
+        phishing_prob = float(ML_ARTIFACTS['model'].predict_proba(X_final)[0][1])
+        threshold = ML_ARTIFACTS['threshold']
+        label = "Phishing" if phishing_prob >= threshold else "Safe"
+
+        return {
+            "status": "OK",
+            "predictions": [{
+                "model_prediction": {
+                    "label": label,
+                    "probability": phishing_prob,
+                    "malicious_file": None,
+                    "file_analysis": "not_supported"
+                }
+            }],
+            "metadata": {
+                "message_id": email_data.MessageId,
+                "threshold_used": threshold,
+                "timestamp": pd.Timestamp.now().isoformat(),
+                "analyzed_by": token_data.client_id
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print("ERROR en /predict | MessageId=" + email_data.MessageId + " | " + type(e).__name__)
+        raise HTTPException(status_code=500, detail="Error interno del servidor.")
