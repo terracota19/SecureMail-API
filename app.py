@@ -143,6 +143,11 @@ async def lifespan(app: FastAPI):
             ML_ARTIFACTS['threshold'] = 0.5
 
         print("Cargando BERT...")
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            
         ML_ARTIFACTS['tokenizer'] = XLMRobertaTokenizer.from_pretrained(BERT_MODEL_NAME)
         ML_ARTIFACTS['bert'] = XLMRobertaModel.from_pretrained(BERT_MODEL_NAME).to(DEVICE).eval()
         print("BERT cargado en " + str(DEVICE))
