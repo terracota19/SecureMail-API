@@ -131,8 +131,7 @@ def engineer_detailed_features(df_input):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 1. Cargamos lo ultraligero primero para dejar el puerto listo al instante
-    print("Iniciando SecureMail API (Arranque ultra-rápido)...")
+    print("Iniciando SecureMail API y precargando modelos...")
     try:
         if os.path.exists(MODEL_PATH):
             ML_ARTIFACTS['model'] = joblib.load(MODEL_PATH)
@@ -144,29 +143,31 @@ async def lifespan(app: FastAPI):
             ML_ARTIFACTS['threshold'] = metrics.get('final_threshold', 0.5)
         else:
             ML_ARTIFACTS['threshold'] = 0.5
+
+        print("Cargando BERT con optimización estricta de memoria (low_cpu_mem_usage)...")
+        import gc
+        gc.disable()  # Desactivar temporalmente el GC evita picos de duplicación de memoria en RAM
+        
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        ML_ARTIFACTS['tokenizer'] = XLMRobertaTokenizer.from_pretrained(BERT_MODEL_NAME)
+        
+        # LOW_CPU_MEM_USAGE evita que Python duplique el peso del modelo al cargar los tensores
+        ML_ARTIFACTS['bert'] = XLMRobertaModel.from_pretrained(
+            BERT_MODEL_NAME, 
+            torch_dtype=torch.float16,
+            low_cpu_mem_usage=True
+        ).to(DEVICE).eval()
+
+        gc.enable()
+        gc.collect()
+        print("¡BERT cargado y optimizado al inicio con éxito!")
+
     except Exception as e:
+        gc.enable()
         print("ERROR CRITICO EN STARTUP: " + str(e))
-        raise RuntimeError("Fallo al inicializar los modelos básicos.") from e
-
-    # 2. Cargamos BERT en un hilo secundario para que Uvicorn abra el puerto ya mismo
-    def load_bert_background():
-        print("Cargando BERT en segundo plano (float16)...")
-        try:
-            import gc
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-
-            ML_ARTIFACTS['tokenizer'] = XLMRobertaTokenizer.from_pretrained(BERT_MODEL_NAME)
-            ML_ARTIFACTS['bert'] = XLMRobertaModel.from_pretrained(
-                BERT_MODEL_NAME, 
-                torch_dtype=torch.float16
-            ).to(DEVICE).eval()
-            print("¡BERT cargado con éxito en segundo plano!")
-        except Exception as e:
-            print("Error cargando BERT en background: " + str(e))
-
-    threading.Thread(target=load_bert_background, daemon=True).start()
+        raise RuntimeError("Fallo al inicializar los modelos.") from e
 
     yield
 
