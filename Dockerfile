@@ -1,28 +1,37 @@
-# 1. Crear el usuario y directorio de trabajo
+FROM python:3.10-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    HF_HOME=/secure.mail/.cache/huggingface \
+    TRANSFORMERS_CACHE=/secure.mail/.cache/huggingface
+
+RUN groupadd -r appgroup && useradd -r -g appgroup appuser
+
 WORKDIR /secure.mail
 
-# 2. Definir variables de entorno para la caché de Hugging Face
-ENV HF_HOME=/secure.mail/.cache/huggingface
-ENV TRANSFORMERS_CACHE=/secure.mail/.cache/huggingface
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
-# 3. Copiar el código fuente (asegúrate de incluir config.py y utils.py)
+COPY requirements.txt ./
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
+
+RUN python -c "from transformers import AutoTokenizer, AutoModel; AutoTokenizer.from_pretrained('xlm-roberta-base'); AutoModel.from_pretrained('xlm-roberta-base')"
+
 COPY app.py ./
 COPY auth.py ./
 COPY utils.py ./
 COPY config.py ./
-
-# Copiar los directorios de artefactos
 COPY models/ ./models/
 COPY objects/ ./objects/
 COPY Metrics/ ./Metrics/
 
-# 4. Crear la carpeta de caché y dar permisos globales a appuser sobre TODO /secure.mail
 RUN mkdir -p /secure.mail/.cache/huggingface && \
     chown -R appuser:appgroup /secure.mail
 
-# 5. Cambiar al usuario sin privilegios después de asignar permisos
 USER appuser
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
