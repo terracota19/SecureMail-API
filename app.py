@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from auth import auth_router, require_scope, TokenData
 
 # ============================================================
-# IMPORTACIÓN SEGURA DE UTILS (EVITA CAÍDAS SI NO EXISTE)
+# IMPORTACIÓN SEGURA DE UTILS
 # ============================================================
 try:
     import utils
@@ -29,7 +29,7 @@ except ModuleNotFoundError:
     print("⚠️ Módulo 'utils' no encontrado en el entorno. Funcionando en modo fallback.")
 
 # ============================================================
-# CONFIGURACIÓN INTERNA (Sin depender de config.py)
+# CONFIGURACIÓN INTERNA
 # ============================================================
 DEVICE = torch.device("cpu")
 TEXT_COLUMNS_FOR_BERT = ["Subject", "Body", "Concatenated_URLs"]
@@ -147,7 +147,7 @@ async def predict(
         }
         input_df = pd.DataFrame([raw_dict])
 
-        # Si tenemos utils cargado y BERT funcionando
+        # Opcion A: Si tenemos utils cargado y BERT funcionando
         if utils is not None and bert_model is not None and tokenizer is not None:
             text_list = []
             for col in TEXT_COLUMNS_FOR_BERT:
@@ -161,16 +161,32 @@ async def predict(
                 input_df, label_encoders, feature_scaler
             )
             X_input = np.hstack([bert_embeddings, additional_scaled])
+
+        # Opción B: Fallback sin utils (extracción manual de features tabulares)
         else:
-            # Fallback seguro: extraer características tabulares con el Scaler
-            # Si el scaler espera nombres de columnas, reindexamos el DataFrame
+            urls = email_data.Concatenated_URLs.split(",") if email_data.Concatenated_URLs != "No Data" else []
+            urls = [u.strip() for u in urls if u.strip() and u.strip() != "No Data"]
+
+            features_dict = {
+                "url_count": len(urls),
+                "body_length": len(email_data.Body) if email_data.Body != "No Data" else 0,
+                "subject_length": len(email_data.Subject) if email_data.Subject != "No Data" else 0,
+                "has_urls": 1 if len(urls) > 0 else 0,
+                "num_dots_urls": sum(u.count('.') for u in urls),
+                "num_hyphens_urls": sum(u.count('-') for u in urls),
+                "has_suspicious_words": 1 if re.search(r'verify|account|bank|login|update|password|urgent|security', email_data.Body, re.IGNORECASE) else 0
+            }
+            
+            numeric_df = pd.DataFrame([features_dict])
+
+            # Si el Scaler requiere columnas específicas por nombre
             if hasattr(feature_scaler, "feature_names_in_"):
                 expected_cols = list(feature_scaler.feature_names_in_)
-                input_df = input_df.reindex(columns=expected_cols, fill_value=0)
-            
-            X_input = feature_scaler.transform(input_df)
+                numeric_df = numeric_df.reindex(columns=expected_cols, fill_value=0)
 
-        # Predicción
+            X_input = feature_scaler.transform(numeric_df)
+
+        # Realizar predicción
         if hasattr(model, "predict_proba"):
             probabilities = model.predict_proba(X_input)[0]
             phishing_prob = float(probabilities[1])
