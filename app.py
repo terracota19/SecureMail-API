@@ -211,10 +211,22 @@ async def predict(
     email_data: EmailInput,
     token_data: TokenData = Depends(require_scope("predict"))
 ):
-    if not ML_ARTIFACTS:
-        raise HTTPException(status_code=503, detail="Servicio no inicializado correctamente.")
+    if 'model' not in ML_ARTIFACTS or 'pipeline' not in ML_ARTIFACTS:
+        raise HTTPException(status_code=503, detail="Servicios de ML no inicializados.")
 
     try:
+        # Cargar BERT bajo demanda la primera vez para evitar Out of Memory en el arranque
+        if 'bert' not in ML_ARTIFACTS:
+            print("Cargando BERT bajo demanda...")
+            import gc
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
+            ML_ARTIFACTS['tokenizer'] = XLMRobertaTokenizer.from_pretrained(BERT_MODEL_NAME)
+            ML_ARTIFACTS['bert'] = XLMRobertaModel.from_pretrained(BERT_MODEL_NAME).to(DEVICE).eval()
+            print("BERT cargado con éxito en " + str(DEVICE))
+
         df_raw = pd.DataFrame([email_data.model_dump()])
         df_engineered = engineer_detailed_features(df_raw)
 
@@ -252,6 +264,15 @@ async def predict(
         threshold = ML_ARTIFACTS['threshold']
         label = "Phishing" if phishing_prob >= threshold else "Safe"
 
+        # Extracción segura del ID para evitar cualquier KeyError o AttributeError
+        client_id_val = "system"
+        if hasattr(token_data, 'client_id'):
+            client_id_val = token_data.client_id
+        elif isinstance(token_data, dict):
+            client_id_val = token_data.get('client_id', 'system')
+        elif isinstance(token_data, str):
+            client_id_val = token_data
+
         return {
             "status": "OK",
             "predictions": [{
@@ -266,7 +287,7 @@ async def predict(
                 "message_id": email_data.MessageId,
                 "threshold_used": threshold,
                 "timestamp": pd.Timestamp.now().isoformat(),
-                "analyzed_by": token_data.client_id
+                "analyzed_by": client_id_val
             }
         }
 
