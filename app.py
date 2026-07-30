@@ -123,6 +123,10 @@ def engineer_detailed_features(df_input):
 # CICLO DE VIDA
 # =============================================================================
 
+# =============================================================================
+# CICLO DE VIDA (Carga inicial de todos los modelos optimizada en float16)
+# =============================================================================
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("Iniciando SecureMail API y cargando todos los modelos...")
@@ -143,15 +147,20 @@ async def lifespan(app: FastAPI):
         else:
             ML_ARTIFACTS['threshold'] = 0.5
 
-        print("Cargando BERT al inicio...")
+        print("Cargando BERT al inicio optimizado en float16 para ahorrar RAM...")
         import gc
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
+        # Forzamos torch_dtype=torch.float16 para reducir el consumo en RAM a la mitad
         ML_ARTIFACTS['tokenizer'] = XLMRobertaTokenizer.from_pretrained(BERT_MODEL_NAME)
-        ML_ARTIFACTS['bert'] = XLMRobertaModel.from_pretrained(BERT_MODEL_NAME).to(DEVICE).eval()
-        print("BERT cargado con éxito en " + str(DEVICE))
+        ML_ARTIFACTS['bert'] = XLMRobertaModel.from_pretrained(
+            BERT_MODEL_NAME, 
+            torch_dtype=torch.float16
+        ).to(DEVICE).eval()
+        
+        print("BERT cargado con éxito y optimizado en " + str(DEVICE))
 
     except Exception as e:
         print("ERROR CRITICO EN STARTUP: " + str(e))
@@ -218,7 +227,7 @@ async def predict(
     email_data: EmailInput,
     token_data: TokenData = Depends(require_scope("predict"))
 ):
-    if not ML_ARTIFACTS or 'bert' not in ML_ARTIFACTS:
+    if not ML_ARTIFACTS or 'bert' not in ML_ARTIFACTS or 'model' not in ML_ARTIFACTS:
         raise HTTPException(status_code=503, detail="Servicios de ML no inicializados correctamente.")
 
     try:
@@ -252,13 +261,14 @@ async def predict(
         with torch.no_grad():
             bert_outputs = ML_ARTIFACTS['bert'](**bert_inputs)
 
-        X_bert = bert_outputs.last_hidden_state[:, 0, :].cpu().numpy()
+        X_bert = bert_outputs.last_hidden_state[:, 0, :].cpu().numpy().astype(np.float32)
         X_final = np.hstack([X_bert, X_structured])
 
         phishing_prob = float(ML_ARTIFACTS['model'].predict_proba(X_final)[0][1])
         threshold = ML_ARTIFACTS['threshold']
         label = "Phishing" if phishing_prob >= threshold else "Safe"
 
+        # Extracción segura del ID de cliente
         client_id_val = "system"
         if hasattr(token_data, 'client_id'):
             client_id_val = token_data.client_id
