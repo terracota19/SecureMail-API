@@ -15,11 +15,14 @@ from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-# Cargar autenticación
+# Cargar autenticación desde auth.py
 from auth import auth_router, require_scope, TokenData
 
-# Importar utils local
-import utils
+# Importar utils local (asegúrate de que utils.py existe y se copia en Docker)
+try:
+    import utils
+except ModuleNotFoundError:
+    utils = None
 
 # ============================================================
 # CONFIGURACIÓN INTERNA (Sin depender de config.py)
@@ -65,10 +68,11 @@ async def lifespan(app: FastAPI):
         label_encoders = joblib.load(ENCODERS_PATH)
         print(f"✅ LabelEncoders cargados desde: {ENCODERS_PATH}")
 
-    # 3. Cargar Modelo BERT y Tokenizer desde utils
-    print("Cargando modelo BERT y Tokenizer...")
-    tokenizer, bert_model = utils.get_bert_model_and_tokenizer()
-    print(f"✅ BERT cargado correctamente.")
+    # 3. Cargar Modelo BERT y Tokenizer desde utils si está disponible
+    if utils and hasattr(utils, "get_bert_model_and_tokenizer"):
+        print("Cargando modelo BERT y Tokenizer...")
+        tokenizer, bert_model = utils.get_bert_model_and_tokenizer()
+        print(f"✅ BERT cargado correctamente.")
 
     # 4. Umbral de Decisión
     if os.path.exists(THRESHOLD_PATH):
@@ -121,10 +125,10 @@ async def predict(
     email_data: EmailInput,
     token_data: TokenData = Depends(require_scope("predict"))
 ):
-    if model is None or feature_scaler is None or bert_model is None:
+    if model is None or feature_scaler is None:
         raise HTTPException(
             status_code=503, 
-            detail="El servidor no está listo: los modelos de ML/BERT no han sido cargados."
+            detail="El servidor no está listo: los modelos de ML no han sido cargados."
         )
 
     try:
@@ -140,26 +144,25 @@ async def predict(
         }
         input_df = pd.DataFrame([raw_dict])
 
-        # 2. Generar Texto Concatenado para BERT (Subject + Body + URLs)
-        text_list = []
-        for col in TEXT_COLUMNS_FOR_BERT:
-            val = input_df[col].fillna("").astype(str) if col in input_df.columns else pd.Series([""])
-            text_list.append(val)
-        
-        combined_text = pd.concat(text_list, axis=1).apply(lambda x: f" {BERT_SEP_TOKEN} ".join(x), axis=1).tolist()
+        # 2. Inferencia con BERT (si utils está cargado)
+        if utils and bert_model and tokenizer:
+            text_list = []
+            for col in TEXT_COLUMNS_FOR_BERT:
+                val = input_df[col].fillna("").astype(str) if col in input_df.columns else pd.Series([""])
+                text_list.append(val)
+            
+            combined_text = pd.concat(text_list, axis=1).apply(lambda x: f" {BERT_SEP_TOKEN} ".join(x), axis=1).tolist()
+            bert_embeddings = utils.generate_bert_embeddings(combined_text, tokenizer, bert_model)
 
-        # 3. Generar Embeddings de BERT
-        bert_embeddings = utils.generate_bert_embeddings(combined_text, tokenizer, bert_model)
+            additional_scaled = utils.transform_preprocess_additional_features(
+                input_df, label_encoders, feature_scaler
+            )
+            X_input = np.hstack([bert_embeddings, additional_scaled])
+        else:
+            # Transformación estándar en caso de no contar con BERT
+            X_input = feature_scaler.transform(input_df)
 
-        # 4. Transformar y escalar las características adicionales (Tabulares)
-        additional_scaled = utils.transform_preprocess_additional_features(
-            input_df, label_encoders, feature_scaler
-        )
-
-        # 5. Combinar Embeddings + Características Adicionales Escaladas (np.hstack)
-        X_input = np.hstack([bert_embeddings, additional_scaled])
-
-        # 6. Realizar Predicción final
+        # 3. Predicción
         if hasattr(model, "predict_proba"):
             probabilities = model.predict_proba(X_input)[0]
             phishing_prob = float(probabilities[1])
