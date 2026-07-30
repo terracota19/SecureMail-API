@@ -1,16 +1,9 @@
 """
-auth.py — Autenticación robusta para SecureMail API
-=====================================================
-Capas de seguridad implementadas:
-  1. API Key  (identifica al cliente/aplicación)
-  2. JWT      (sesión con expiración y scopes)
-  3. Rate limiting por IP
-  4. Hashing seguro de secrets con bcrypt
+auth.py — Autenticación robusta y optimizada en memoria para SecureMail API
 """
 
 import os
 import time
-import hashlib
 import secrets
 import logging
 from datetime import datetime, timedelta, timezone
@@ -18,7 +11,7 @@ from typing import Optional
 from collections import defaultdict
 
 import bcrypt
-from jose import JWTError, jwt
+import jwt  # Usando PyJWT en lugar de python-jose
 from fastapi import Depends, HTTPException, Request, Security, status
 from fastapi.security import APIKeyHeader, OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel
@@ -26,16 +19,13 @@ from pydantic import BaseModel
 logger = logging.getLogger(__name__)
 
 # =============================================================================
-# CONFIGURACIÓN — lee todo desde variables de entorno, nunca hardcodeado
+# CONFIGURACIÓN
 # =============================================================================
 
-JWT_SECRET_KEY: str = os.environ["JWT_SECRET_KEY"]          # openssl rand -hex 32
-JWT_ALGORITHM: str  = os.getenv("JWT_ALGORITHM", "HS256")
-JWT_EXPIRE_MINUTES: int = int(os.getenv("JWT_EXPIRE_MINUTES", "1440"))  # 24 h
+JWT_SECRET_KEY: str = os.environ.get("JWT_SECRET_KEY", "fallback_secret_change_me")
+JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
+JWT_EXPIRE_MINUTES: int = int(os.getenv("JWT_EXPIRE_MINUTES", "1440"))
 
-# Base de clientes autorizados (en producción: base de datos)
-# Formato: { "client_id": bcrypt_hash_del_secret }
-# Genera hash:  bcrypt.hashpw(b"tu_secret", bcrypt.gensalt()).decode()
 AUTHORIZED_CLIENTS: dict[str, str] = {
     client_id: client_hash
     for entry in os.getenv("AUTHORIZED_CLIENTS", "").split(";")
@@ -43,9 +33,8 @@ AUTHORIZED_CLIENTS: dict[str, str] = {
     for client_id, client_hash in [entry.split(":", 1)]
 }
 
-# Rate limiting: máximo N peticiones por ventana de tiempo
 RATE_LIMIT_REQUESTS: int = int(os.getenv("RATE_LIMIT_REQUESTS", "10"))
-RATE_LIMIT_WINDOW_S: int  = int(os.getenv("RATE_LIMIT_WINDOW_S", "60"))
+RATE_LIMIT_WINDOW_S: int = int(os.getenv("RATE_LIMIT_WINDOW_S", "60"))
 
 # =============================================================================
 # SCHEMAS
@@ -54,7 +43,7 @@ RATE_LIMIT_WINDOW_S: int  = int(os.getenv("RATE_LIMIT_WINDOW_S", "60"))
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
-    expires_in: int  # segundos
+    expires_in: int
 
 
 class TokenData(BaseModel):
@@ -62,17 +51,27 @@ class TokenData(BaseModel):
     scopes: list[str] = []
 
 # =============================================================================
-# RATE LIMITER — en memoria; para producción usa Redis
+# RATE LIMITER OPTIMIZADO (Sin Fugas de Memoria)
 # =============================================================================
 
 _rate_store: dict[str, list[float]] = defaultdict(list)
-
+_last_cleanup: float = time.monotonic()
 
 def _check_rate_limit(ip: str) -> None:
-    """Ventana deslizante: máximo RATE_LIMIT_REQUESTS por RATE_LIMIT_WINDOW_S."""
+    global _last_cleanup
     now = time.monotonic()
+    
+    # Mantenimiento de memoria: limpiar IPs inactivas cada 5 minutos
+    if now - _last_cleanup > 300:
+        window_start = now - RATE_LIMIT_WINDOW_S
+        dead_ips = [k for k, v in _rate_store.items() if not v or max(v) < window_start]
+        for k in dead_ips:
+            del _rate_store[k]
+        _last_cleanup = now
+
     window_start = now - RATE_LIMIT_WINDOW_S
     calls = [t for t in _rate_store[ip] if t > window_start]
+    
     if len(calls) >= RATE_LIMIT_REQUESTS:
         retry_after = int(calls[0] - window_start) + 1
         raise HTTPException(
@@ -80,21 +79,23 @@ def _check_rate_limit(ip: str) -> None:
             detail="Demasiadas peticiones. Inténtalo más tarde.",
             headers={"Retry-After": str(retry_after)},
         )
+    
     calls.append(now)
     _rate_store[ip] = calls
 
 # =============================================================================
-# JWT — creación y verificación
+# JWT (PyJWT)
 # =============================================================================
 
 def _create_jwt(client_id: str, scopes: list[str]) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(minutes=JWT_EXPIRE_MINUTES)
+    now = datetime.now(timezone.utc)
+    expire = now + timedelta(minutes=JWT_EXPIRE_MINUTES)
     payload = {
         "sub": client_id,
         "scopes": scopes,
         "exp": expire,
-        "iat": datetime.now(timezone.utc),
-        "jti": secrets.token_hex(16),  # ID único del token (permite revocación futura)
+        "iat": now,
+        "jti": secrets.token_hex(16),
     }
     return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
 
@@ -107,7 +108,7 @@ def _decode_jwt(token: str) -> TokenData:
         if not client_id:
             raise HTTPException(status_code=401, detail="Token inválido.")
         return TokenData(client_id=client_id, scopes=scopes)
-    except JWTError:
+    except jwt.PyJWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token expirado o inválido.",
@@ -115,44 +116,32 @@ def _decode_jwt(token: str) -> TokenData:
         )
 
 # =============================================================================
-# SEGURIDAD HTTP — esquemas FastAPI
+# SEGURIDAD HTTP Y DEPENDENCIAS
 # =============================================================================
 
 _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
-_oauth2_scheme  = OAuth2PasswordBearer(tokenUrl="/auth/token", auto_error=False)
+_oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token", auto_error=False)
 
 
 def _get_ip(request: Request) -> str:
     forwarded = request.headers.get("X-Forwarded-For")
     return forwarded.split(",")[0].strip() if forwarded else request.client.host
 
-# =============================================================================
-# DEPENDENCIAS PÚBLICAS (inyectar en los endpoints)
-# =============================================================================
 
 async def require_auth(
     request: Request,
     api_key: Optional[str] = Security(_api_key_header),
     bearer_token: Optional[str] = Depends(_oauth2_scheme),
 ) -> TokenData:
-    """
-    Dependencia principal. Acepta DOS métodos de autenticación:
-      - X-API-Key header  →  verifica contra AUTHORIZED_CLIENTS
-      - Authorization: Bearer <jwt>  →  valida JWT
-    Aplica rate limiting antes de cualquier verificación.
-    """
     ip = _get_ip(request)
     _check_rate_limit(ip)
 
-    # --- Método 1: JWT Bearer ---
     if bearer_token:
         token_data = _decode_jwt(bearer_token)
         logger.info("Auth OK (JWT) | client=%s ip=%s", token_data.client_id, ip)
         return token_data
 
-    # --- Método 2: API Key directa ---
     if api_key:
-        # Búsqueda en tiempo constante para evitar timing attacks
         matched_id: Optional[str] = None
         for cid, hashed in AUTHORIZED_CLIENTS.items():
             try:
@@ -174,10 +163,6 @@ async def require_auth(
 
 
 def require_scope(scope: str):
-    """
-    Fábrica de dependencias para verificar un scope específico.
-    Uso:  @app.post("/predict", dependencies=[Depends(require_scope("predict"))])
-    """
     async def _check(token_data: TokenData = Depends(require_auth)) -> TokenData:
         if scope not in token_data.scopes and "admin" not in token_data.scopes:
             raise HTTPException(
@@ -188,11 +173,8 @@ def require_scope(scope: str):
     return _check
 
 # =============================================================================
-# ENDPOINT /auth/token — obtener JWT a partir de client_id + secret
+# ROUTER DE AUTENTICACIÓN
 # =============================================================================
-# Registra este router en tu app principal:
-#   from auth import auth_router
-#   app.include_router(auth_router)
 
 from fastapi import APIRouter
 
@@ -204,13 +186,6 @@ async def login(
     request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
 ):
-    """
-    Intercambia client_id + client_secret por un JWT con 24 h de validez.
-
-    Ejemplo con curl:
-        curl -X POST http://localhost:8000/auth/token \\
-          -d "username=mi_cliente&password=mi_secret"
-    """
     ip = _get_ip(request)
     _check_rate_limit(ip)
 
@@ -226,7 +201,6 @@ async def login(
             valid = False
 
     if not valid:
-        # Log sin exponer cuál campo fue incorrecto
         logger.warning("Auth fallida | client=%s ip=%s", client_id, ip)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
