@@ -237,30 +237,26 @@ async def predict(
     token_data: TokenData = Depends(require_scope("predict"))
 ):
     try:
-        # Carga bajo demanda con mapeo a disco (offload) para evitar superar los 512MB de RAM
+        # Si BERT se está cargando en segundo plano y aún no está listo, 
+        # respondemos de inmediato con un código de estado controlado para que el complemento no sufra timeout.
         if 'bert' not in ML_ARTIFACTS or 'tokenizer' not in ML_ARTIFACTS:
-            print("Cargando BERT con descarga a disco (offload) para proteger la RAM...")
-            import gc
-            
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            
-            torch.set_num_threads(1)
-            
-            ML_ARTIFACTS['tokenizer'] = XLMRobertaTokenizer.from_pretrained(BERT_MODEL_NAME)
-            
-            # device_map="auto" junto a offload_folder desplaza los pesos pesados al disco (caché)
-            ML_ARTIFACTS['bert'] = XLMRobertaModel.from_pretrained(
-                BERT_MODEL_NAME, 
-                torch_dtype=torch.float16,
-                low_cpu_mem_usage=True,
-                device_map="auto",
-                offload_folder="/secure.mail/cache"
-            ).eval()
-            
-            gc.collect()
-            print("¡BERT cargado mediante mapeo en disco con éxito!")
+            return {
+                "status": "INITIALIZING",
+                "predictions": [{
+                    "model_prediction": {
+                        "label": "Preparing",
+                        "probability": 0.0,
+                        "malicious_file": None,
+                        "file_analysis": "not_supported"
+                    }
+                }],
+                "metadata": {
+                    "message_id": email_data.MessageId,
+                    "threshold_used": 0.5,
+                    "timestamp": pd.Timestamp.now().isoformat(),
+                    "analyzed_by": "system_warming_up"
+                }
+            }
 
         if 'model' not in ML_ARTIFACTS or 'pipeline' not in ML_ARTIFACTS:
             raise HTTPException(status_code=503, detail="Los modelos base no están inicializados.")
