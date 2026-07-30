@@ -1,10 +1,10 @@
 import os
 import torch
 
-# 1. Dispositivo de ejecución (CPU en Render para no saturar memoria)
+# 1. Dispositivo de ejecución (CPU en Render para controlar la RAM)
 DEVICE = torch.device("cpu")
 
-# 2. Verificación de Optuna (Evita el AttributeError en utils.py)
+# 2. Verificación de Optuna
 try:
     import optuna
     OPTUNA_AVAILABLE = True
@@ -13,7 +13,7 @@ except ImportError:
 
 # 3. Configuración de Modelos y Textos
 BERT_MODEL_NAME = "xlm-roberta-base"
-BERT_SEP_TOKEN = "</s>"  # Separador por defecto de XLM-RoBERTa
+BERT_SEP_TOKEN = "</s>"
 MAX_LENGTH = 128
 BATCH_SIZE = 16
 
