@@ -6,6 +6,8 @@ import pandas as pd
 import json
 import os
 from dotenv import load_dotenv
+import threading
+
 load_dotenv()
 
 from urllib.parse import urlparse
@@ -129,42 +131,42 @@ def engineer_detailed_features(df_input):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("Iniciando SecureMail API y cargando todos los modelos...")
+    # 1. Cargamos lo ultraligero primero para dejar el puerto listo al instante
+    print("Iniciando SecureMail API (Arranque ultra-rápido)...")
     try:
         if os.path.exists(MODEL_PATH):
             ML_ARTIFACTS['model'] = joblib.load(MODEL_PATH)
-            print("Modelo cargado desde " + MODEL_PATH)
-
         if os.path.exists(PIPELINE_PATH):
             ML_ARTIFACTS['pipeline'] = joblib.load(PIPELINE_PATH)
-            print("Pipeline cargado desde " + PIPELINE_PATH)
-
         if os.path.exists(METRICS_PATH):
             with open(METRICS_PATH, 'r') as f:
                 metrics = json.load(f)
             ML_ARTIFACTS['threshold'] = metrics.get('final_threshold', 0.5)
-            print("Umbral de decision cargado: " + str(ML_ARTIFACTS['threshold']))
         else:
             ML_ARTIFACTS['threshold'] = 0.5
-
-        print("Cargando BERT al inicio optimizado en float16 para ahorrar RAM...")
-        import gc
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
-        # Forzamos torch_dtype=torch.float16 para reducir el consumo en RAM a la mitad
-        ML_ARTIFACTS['tokenizer'] = XLMRobertaTokenizer.from_pretrained(BERT_MODEL_NAME)
-        ML_ARTIFACTS['bert'] = XLMRobertaModel.from_pretrained(
-            BERT_MODEL_NAME, 
-            torch_dtype=torch.float16
-        ).to(DEVICE).eval()
-        
-        print("BERT cargado con éxito y optimizado en " + str(DEVICE))
-
     except Exception as e:
         print("ERROR CRITICO EN STARTUP: " + str(e))
-        raise RuntimeError("Fallo al inicializar los modelos.") from e
+        raise RuntimeError("Fallo al inicializar los modelos básicos.") from e
+
+    # 2. Cargamos BERT en un hilo secundario para que Uvicorn abra el puerto ya mismo
+    def load_bert_background():
+        print("Cargando BERT en segundo plano (float16)...")
+        try:
+            import gc
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+            ML_ARTIFACTS['tokenizer'] = XLMRobertaTokenizer.from_pretrained(BERT_MODEL_NAME)
+            ML_ARTIFACTS['bert'] = XLMRobertaModel.from_pretrained(
+                BERT_MODEL_NAME, 
+                torch_dtype=torch.float16
+            ).to(DEVICE).eval()
+            print("¡BERT cargado con éxito en segundo plano!")
+        except Exception as e:
+            print("Error cargando BERT en background: " + str(e))
+
+    threading.Thread(target=load_bert_background, daemon=True).start()
 
     yield
 
