@@ -2,6 +2,7 @@ import os
 import re
 import json
 import joblib
+import torch
 import numpy as np
 import pandas as pd
 from typing import List, Optional
@@ -17,12 +18,26 @@ from pydantic import BaseModel, Field
 # Cargar autenticación
 from auth import auth_router, require_scope, TokenData
 
-# Importar tus propios módulos de entrenamiento
-import config
+# Importar utils local
 import utils
 
 # ============================================================
-# VARIABLES GLOBALES Y CARGA DE MODELOS Y BERT
+# CONFIGURACIÓN INTERNA (Sin depender de config.py)
+# ============================================================
+DEVICE = torch.device("cpu")
+TEXT_COLUMNS_FOR_BERT = ["Subject", "Body", "Concatenated_URLs"]
+BERT_SEP_TOKEN = "[SEP]"
+
+MODELS_DIR = os.getenv("MODELS_DIR", "/secure.mail/models")
+OBJECTS_DIR = os.getenv("OBJECTS_DIR", "/secure.mail/objects")
+
+SCALER_PATH = os.path.join(OBJECTS_DIR, "feature_scaler.joblib")
+ENCODERS_PATH = os.path.join(OBJECTS_DIR, "label_encoders.joblib")
+MODEL_PATH = os.path.join(MODELS_DIR, "best_phishing_model.joblib")
+THRESHOLD_PATH = os.path.join(OBJECTS_DIR, "decision_threshold.joblib")
+
+# ============================================================
+# VARIABLES GLOBALES Y CARGA DE MODELOS
 # ============================================================
 model = None
 tokenizer = None
@@ -36,32 +51,28 @@ async def lifespan(app: FastAPI):
     global model, tokenizer, bert_model, feature_scaler, label_encoders, decision_threshold
     print("Iniciando SecureMail API...")
 
-    # 1. Cargar modelo principal de clasificación
-    model_path = os.path.join(config.MODELS_DIR if hasattr(config, 'MODELS_DIR') else "/secure.mail/models", "best_phishing_model.joblib")
-    if os.path.exists(model_path):
-        model = joblib.load(model_path)
-        print(f"✅ Modelo principal cargado desde: {model_path}")
+    # 1. Cargar modelo principal
+    if os.path.exists(MODEL_PATH):
+        model = joblib.load(MODEL_PATH)
+        print(f"✅ Modelo principal cargado desde: {MODEL_PATH}")
 
-    # 2. Cargar Scaler y LabelEncoders desde tus artefactos
-    scaler_path = getattr(config, 'SCALER_PATH', "/secure.mail/objects/feature_scaler.joblib")
-    if os.path.exists(scaler_path):
-        feature_scaler = joblib.load(scaler_path)
-        print(f"✅ Scaler cargado desde: {scaler_path}")
+    # 2. Cargar Scaler y LabelEncoders
+    if os.path.exists(SCALER_PATH):
+        feature_scaler = joblib.load(SCALER_PATH)
+        print(f"✅ Scaler cargado desde: {SCALER_PATH}")
 
-    encoders_path = getattr(config, 'ENCODERS_PATH', "/secure.mail/objects/label_encoders.joblib")
-    if os.path.exists(encoders_path):
-        label_encoders = joblib.load(encoders_path)
-        print(f"✅ LabelEncoders cargados desde: {encoders_path}")
+    if os.path.exists(ENCODERS_PATH):
+        label_encoders = joblib.load(ENCODERS_PATH)
+        print(f"✅ LabelEncoders cargados desde: {ENCODERS_PATH}")
 
-    # 3. Cargar Modelo BERT y Tokenizer usando tu utils
+    # 3. Cargar Modelo BERT y Tokenizer desde utils
     print("Cargando modelo BERT y Tokenizer...")
     tokenizer, bert_model = utils.get_bert_model_and_tokenizer()
-    print(f"✅ BERT cargado correctamente en dispositivo: {config.DEVICE}")
+    print(f"✅ BERT cargado correctamente.")
 
     # 4. Umbral de Decisión
-    threshold_path = "/secure.mail/objects/decision_threshold.joblib"
-    if os.path.exists(threshold_path):
-        decision_threshold = float(joblib.load(threshold_path))
+    if os.path.exists(THRESHOLD_PATH):
+        decision_threshold = float(joblib.load(THRESHOLD_PATH))
         print(f"✅ Umbral de decisión cargado: {decision_threshold}")
 
     yield
@@ -130,15 +141,12 @@ async def predict(
         input_df = pd.DataFrame([raw_dict])
 
         # 2. Generar Texto Concatenado para BERT (Subject + Body + URLs)
-        text_cols = getattr(config, 'TEXT_COLUMNS_FOR_BERT', ['Subject', 'Body', 'Concatenated_URLs'])
-        sep_token = getattr(config, 'BERT_SEP_TOKEN', '[SEP]')
-        
         text_list = []
-        for col in text_cols:
+        for col in TEXT_COLUMNS_FOR_BERT:
             val = input_df[col].fillna("").astype(str) if col in input_df.columns else pd.Series([""])
             text_list.append(val)
         
-        combined_text = pd.concat(text_list, axis=1).apply(lambda x: f" {sep_token} ".join(x), axis=1).tolist()
+        combined_text = pd.concat(text_list, axis=1).apply(lambda x: f" {BERT_SEP_TOKEN} ".join(x), axis=1).tolist()
 
         # 3. Generar Embeddings de BERT
         bert_embeddings = utils.generate_bert_embeddings(combined_text, tokenizer, bert_model)
@@ -151,7 +159,7 @@ async def predict(
         # 5. Combinar Embeddings + Características Adicionales Escaladas (np.hstack)
         X_input = np.hstack([bert_embeddings, additional_scaled])
 
-        # 6. Realizar Predicción final con el Modelo de ML
+        # 6. Realizar Predicción final
         if hasattr(model, "predict_proba"):
             probabilities = model.predict_proba(X_input)[0]
             phishing_prob = float(probabilities[1])
