@@ -23,18 +23,17 @@ from sklearn.model_selection import StratifiedKFold, GridSearchCV
 from sklearn.metrics import precision_recall_curve, f1_score, classification_report
 import joblib
 
-# Configuración / Fallbacks
+from fastapi import FastAPI
+
 try:
     from bs4 import BeautifulSoup
     BS4_AVAILABLE = True
 except ImportError:
     BS4_AVAILABLE = False
-    print("⚠️ BeautifulSoup4 no encontrado. La limpieza de HTML en EMLs será básica.")
 
 try:
     import config
 except ImportError:
-    # Objeto dummy de fallback en caso de no tener config.py separado
     class ConfigDummy:
         MISSING_VALUE_STR = "No Data"
         TARGET_COLUMN = "Phishing"
@@ -48,13 +47,7 @@ except ImportError:
         OPTUNA_AVAILABLE = False
     config = ConfigDummy()
 
-
-# ==========================================
-# 1. CARGA Y PARSEO DE DATOS (CSV Y EML)
-# ==========================================
-
 def create_concatenated_urls(url_value):
-    """Limpia y concatena URLs de los datos CSV."""
     missing_val_str = config.MISSING_VALUE_STR
     if pd.isna(url_value) or str(url_value).strip().lower() in ['0', '0.0', '', 'nan', 'none']:
         return missing_val_str
@@ -71,11 +64,8 @@ def create_concatenated_urls(url_value):
     result = ' '.join(url_str.split())
     return result if result else missing_val_str
 
-
 def load_and_combine_data(file_paths, expected_cols, target_col, missing_val_str=config.MISSING_VALUE_STR):
-    """Carga y unifica datasets CSV optimizando el uso de memoria."""
     all_data = []
-    print(f"--- Cargando {len(file_paths)} datasets CSV ---")
 
     for file in tqdm(file_paths, desc="Cargando CSVs"):
         try:
@@ -87,7 +77,7 @@ def load_and_combine_data(file_paths, expected_cols, target_col, missing_val_str
                 df = pd.read_csv(file, encoding='latin1', on_bad_lines='skip')
             all_data.append(df)
         except Exception as e:
-            print(f"❌ Error al cargar {file}: {e}")
+            pass
 
     if not all_data:
         return pd.DataFrame()
@@ -122,9 +112,7 @@ def load_and_combine_data(file_paths, expected_cols, target_col, missing_val_str
     
     return df_combined
 
-
 def decode_payload(part):
-    """Decodifica partes de email manejando encodings."""
     payload = part.get_payload(decode=True)
     if not payload:
         return ""
@@ -146,9 +134,7 @@ def decode_payload(part):
 
     return payload.decode('ascii', errors='replace')
 
-
 def extract_body_from_eml(msg):
-    """Extrae el texto del cuerpo de un email."""
     body_plain, body_html = None, None
 
     if msg.is_multipart():
@@ -181,9 +167,7 @@ def extract_body_from_eml(msg):
 
     return config.MISSING_VALUE_STR
 
-
 def parse_eml_file(file_path):
-    """Parsea un archivo .eml individual."""
     try:
         with open(file_path, 'rb') as f:
             msg = BytesParser(policy=policy.default).parse(f)
@@ -196,12 +180,9 @@ def parse_eml_file(file_path):
             'Body': extract_body_from_eml(msg)
         }
     except Exception as e:
-        print(f"❌ Error parseando {os.path.basename(file_path)}: {e}")
         return None
 
-
 def extract_urls_from_body_text(body_text):
-    """Extrae URLs válidas con Regex."""
     if not isinstance(body_text, str) or not body_text:
         return config.MISSING_VALUE_STR
 
@@ -226,9 +207,7 @@ def extract_urls_from_body_text(body_text):
 
     return ' '.join(valid_urls) if valid_urls else config.MISSING_VALUE_STR
 
-
 def process_eml_directory(dir_path, target_value=1):
-    """Procesa una carpeta completa de archivos .eml."""
     eml_files = glob.glob(os.path.join(dir_path, '**', '*.eml'), recursive=True)
     if not eml_files:
         return pd.DataFrame(columns=config.EXPECTED_PARSED_COLS)
@@ -259,13 +238,7 @@ def process_eml_directory(dir_path, target_value=1):
 
     return df[config.EXPECTED_PARSED_COLS]
 
-
-# ==========================================
-# 2. FEATURE ENGINEERING Y PREPROCESAMIENTO
-# ==========================================
-
 def extract_time_feature(df):
-    """Extrae la hora como float de la columna Date."""
     df_copy = df.copy()
     if 'Date' in df_copy.columns:
         date_dt = pd.to_datetime(df_copy['Date'], errors='coerce', utc=True)
@@ -274,9 +247,7 @@ def extract_time_feature(df):
         df_copy[config.TIME_FEATURE] = 0.0
     return df_copy
 
-
 def fit_preprocess_additional_features(df_train):
-    """Ajusta codificadores y escaladores sin duplicar RAM."""
     df_processed = extract_time_feature(df_train)
     label_encoders = {}
     fitted_data_list = []
@@ -318,9 +289,7 @@ def fit_preprocess_additional_features(df_train):
 
     return scaled_data, label_encoders, scaler
 
-
 def transform_preprocess_additional_features(df, label_encoders, scaler):
-    """Aplica trasformaciones preajustadas a nuevos datos."""
     df_processed = extract_time_feature(df)
     hasher = label_encoders['feature_hasher']
     cols_to_hash = [col for col in config.CATEGORICAL_FEATURES if col in df_processed.columns]
@@ -353,9 +322,7 @@ def transform_preprocess_additional_features(df, label_encoders, scaler):
     features_to_scale = np.hstack(features_list)
     return scaler.transform(features_to_scale).astype(np.float32)
 
-
 def set_dynamic_model_weights(y_train, models_tune, models_no_tune):
-    """Calcula el balance de clases dinámico (scale_pos_weight)."""
     counts = np.bincount(y_train)
     xgb_scale_weight = float(counts[0] / counts[1]) if len(counts) > 1 and counts[1] > 0 else 1.0
 
@@ -364,27 +331,16 @@ def set_dynamic_model_weights(y_train, models_tune, models_no_tune):
             try:
                 model_dict['XGBoost'].set_params(scale_pos_weight=xgb_scale_weight)
             except Exception as e:
-                print(f"⚠️ No se pudo asignar weight a XGBoost: {e}")
-
-
-# ==========================================
-# 3. EMBEDDINGS ROBUSTOS CON TRANSFORMERS
-# ==========================================
+                pass
 
 def get_bert_model_and_tokenizer():
-    """Carga tokenizer y modelo XLM-RoBERTa."""
     tokenizer = XLMRobertaTokenizer.from_pretrained(config.BERT_MODEL_NAME)
     model = XLMRobertaModel.from_pretrained(config.BERT_MODEL_NAME)
     model.to(config.DEVICE)
     model.eval()
     return tokenizer, model
 
-
 def generate_bert_embeddings(texts, tokenizer, model):
-    """
-    Genera embeddings XLM-RoBERTa con optimización de memoria VRAM/RAM 
-    usando torch.no_grad() y liberando los tensores intermedios.
-    """
     if not texts:
         return np.empty((0, 768), dtype=np.float32)
 
@@ -392,7 +348,6 @@ def generate_bert_embeddings(texts, tokenizer, model):
     use_cuda = config.DEVICE.type == 'cuda'
     dtype = torch.float16 if use_cuda else torch.float32
 
-    # torch.no_grad deshabilita el cálculo del grafo de autograd liberando RAM masivamente
     with torch.no_grad():
         with autocast(enabled=use_cuda, dtype=dtype):
             for i in tqdm(range(0, len(texts), config.BATCH_SIZE), desc="Generando Embeddings"):
@@ -408,7 +363,6 @@ def generate_bert_embeddings(texts, tokenizer, model):
 
                 outputs = model(**encoded)
                 
-                # Mean Pooling sobre tokens válidos
                 mask = encoded['attention_mask'].unsqueeze(-1).expand(outputs.last_hidden_state.size()).float()
                 sum_emb = torch.sum(outputs.last_hidden_state * mask, 1)
                 sum_mask = torch.clamp(mask.sum(1), min=1e-9)
@@ -416,7 +370,6 @@ def generate_bert_embeddings(texts, tokenizer, model):
 
                 embeddings.append(mean_pooled)
 
-                # Limpiar tensores temporales del ciclo
                 del encoded, outputs, mask, sum_emb, sum_mask
                 if use_cuda:
                     torch.cuda.empty_cache()
@@ -427,10 +380,12 @@ def generate_bert_embeddings(texts, tokenizer, model):
     
     return final_embeddings
 
+app = FastAPI(title="SecureMail Phishing Detection API", version="1.0")
 
-# ==========================================
-# 4. EJECUCIÓN O STREAMLIT ENTRYPOINT
-# ==========================================
+@app.get("/")
+def read_root():
+    return {"status": "online", "message": "API de detección de phishing activa"}
 
-if __name__ == "__main__":
-    print("🚀 Módulo app.py inicializado correctamente con optimización de memoria.")
+@app.get("/health")
+def health_check():
+    return {"status": "healthy"}
