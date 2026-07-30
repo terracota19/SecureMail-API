@@ -6,7 +6,7 @@ import pandas as pd
 import json
 import os
 from dotenv import load_dotenv
-import threading
+import spaces
 
 load_dotenv()
 
@@ -125,14 +125,11 @@ def engineer_detailed_features(df_input):
 # CICLO DE VIDA
 # =============================================================================
 
-# =============================================================================
-# CICLO DE VIDA (Carga inicial de todos los modelos optimizada en float16)
-# =============================================================================
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("Iniciando SecureMail API (Arranque rápido)...")
+    print("Iniciando SecureMail API en Hugging Face Spaces...")
     try:
+        # Carga tus artefactos de joblib con normalidad
         if os.path.exists(MODEL_PATH):
             ML_ARTIFACTS['model'] = joblib.load(MODEL_PATH)
         if os.path.exists(PIPELINE_PATH):
@@ -144,42 +141,22 @@ async def lifespan(app: FastAPI):
         else:
             ML_ARTIFACTS['threshold'] = 0.5
 
-        print("¡Modelos base cargados! El puerto se abrirá de inmediato.")
+        # Carga el Tokenizer y el Modelo BERT SIN hacer .to(DEVICE) aquí
+        ML_ARTIFACTS['tokenizer'] = XLMRobertaTokenizer.from_pretrained(BERT_MODEL_NAME)
+        ML_ARTIFACTS['bert'] = XLMRobertaModel.from_pretrained(
+            BERT_MODEL_NAME, 
+            torch_dtype=torch.float16,
+            low_cpu_mem_usage=True
+        ).eval()
+
+        print("¡Modelos cargados correctamente!")
+
     except Exception as e:
         print("ERROR CRITICO EN STARTUP: " + str(e))
         raise RuntimeError("Fallo al inicializar los modelos.") from e
 
-    # Lanzamos la carga optimizada de BERT en segundo plano para no bloquear el puerto
-    def load_bert_background():
-        print("Cargando BERT en segundo plano con optimización de memoria...")
-        try:
-            import gc
-            gc.disable()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-
-            ML_ARTIFACTS['tokenizer'] = XLMRobertaTokenizer.from_pretrained(BERT_MODEL_NAME)
-            ML_ARTIFACTS['bert'] = XLMRobertaModel.from_pretrained(
-                BERT_MODEL_NAME, 
-                torch_dtype=torch.float16,
-                low_cpu_mem_usage=True
-            ).to(DEVICE).eval()
-
-            gc.enable()
-            gc.collect()
-            print("¡BERT cargado con éxito en segundo plano y optimizado!")
-        except Exception as e:
-            gc.enable()
-            print("Error crítico cargando BERT en background: " + str(e))
-
-    threading.Thread(target=load_bert_background, daemon=True).start()
-
     yield
-
     ML_ARTIFACTS.clear()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-    print("API detenida y recursos liberados.")
     
     
 # =============================================================================
@@ -231,101 +208,68 @@ def health_check():
         "models_loaded": bool(ML_ARTIFACTS),
     }
 
+@spaces.GPU
 @app.post("/predict")
 async def predict(
     email_data: EmailInput,
     token_data: TokenData = Depends(require_scope("predict"))
 ):
     try:
-        # Si BERT se está cargando en segundo plano y aún no está listo, 
-        # respondemos de inmediato con un código de estado controlado para que el complemento no sufra timeout.
-        if 'bert' not in ML_ARTIFACTS or 'tokenizer' not in ML_ARTIFACTS:
-            return {
-                "status": "INITIALIZING",
-                "predictions": [{
-                    "model_prediction": {
-                        "label": "Preparing",
-                        "probability": 0.0,
-                        "malicious_file": None,
-                        "file_analysis": "not_supported"
-                    }
-                }],
-                "metadata": {
-                    "message_id": email_data.MessageId,
-                    "threshold_used": 0.5,
-                    "timestamp": pd.Timestamp.now().isoformat(),
-                    "analyzed_by": "system_warming_up"
-                }
-            }
+        if 'bert' not in ML_ARTIFACTS or 'model' not in ML_ARTIFACTS or 'pipeline' not in ML_ARTIFACTS:
+            raise HTTPException(status_code=500, detail="Los modelos no están cargados correctamente.")
 
-        if 'model' not in ML_ARTIFACTS or 'pipeline' not in ML_ARTIFACTS:
-            raise HTTPException(status_code=503, detail="Los modelos base no están inicializados.")
-
-        df_raw = pd.DataFrame([email_data.model_dump()])
-        df_engineered = engineer_detailed_features(df_raw)
-
-        try:
-            X_structured = ML_ARTIFACTS['pipeline'].transform(df_engineered)
-            X_structured = X_structured.astype(np.float32)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail="Error al procesar las caracteristicas del correo.")
-
-        text_parts = [
-            str(df_engineered.iloc[0].get('From', MISSING_VALUE_STR)),
-            str(df_engineered.iloc[0].get('To', MISSING_VALUE_STR)),
-            str(df_engineered.iloc[0].get('Date', MISSING_VALUE_STR)),
-            str(df_engineered.iloc[0].get('Subject', MISSING_VALUE_STR)),
-            str(df_engineered.iloc[0].get('Body', MISSING_VALUE_STR)),
-            str(df_engineered.iloc[0].get('Concatenated_URLs', MISSING_VALUE_STR))
-        ]
-        full_text = (" " + BERT_SEP_TOKEN + " ").join(text_parts)
-
-        bert_inputs = ML_ARTIFACTS['tokenizer'](
-            full_text,
-            return_tensors="pt",
-            max_length=MAX_LENGTH,
-            truncation=True,
-            padding='max_length'
-        ).to(DEVICE)
-
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        
+        bert_model = ML_ARTIFACTS['bert'].to(device)
+        tokenizer = ML_ARTIFACTS['tokenizer']
+        
+        input_text = f"{email_data.Subject} {BERT_SEP_TOKEN} {email_data.Body}"
+        inputs = tokenizer(input_text, return_tensors="pt", truncation=True, max_length=MAX_LENGTH).to(device)
+        
         with torch.no_grad():
-            bert_outputs = ML_ARTIFACTS['bert'](**bert_inputs)
+            outputs = bert_model(**inputs)
+            embeddings = outputs.last_hidden_state[:, 0, :].cpu().numpy()
 
-        X_bert = bert_outputs.last_hidden_state[:, 0, :].cpu().numpy().astype(np.float32)
-        X_final = np.hstack([X_bert, X_structured])
-
-        phishing_prob = float(ML_ARTIFACTS['model'].predict_proba(X_final)[0][1])
+        input_dict = {
+            'From': [email_data.From],
+            'To': [email_data.To],
+            'Subject': [email_data.Subject],
+            'Body': [email_data.Body],
+            'Date': [email_data.Date],
+            'Concatenated_URLs': [email_data.Concatenated_URLs],
+            'MessageId': [email_data.MessageId]
+        }
+        
+        df_raw = pd.DataFrame(input_dict)
+        df_features = engineer_detailed_features(df_raw)
+        
+        numeric_cols = ML_ARTIFACTS['pipeline'].feature_names_in_
+        X_tabular = df_features[numeric_cols]
+        X_tabular_scaled = ML_ARTIFACTS['pipeline'].transform(X_tabular)
+        
+        X_final = np.hstack((embeddings, X_tabular_scaled))
+        
+        model = ML_ARTIFACTS['model']
         threshold = ML_ARTIFACTS['threshold']
-        label = "Phishing" if phishing_prob >= threshold else "Safe"
-
-        client_id_val = "system"
-        if hasattr(token_data, 'client_id'):
-            client_id_val = token_data.client_id
-        elif isinstance(token_data, dict):
-            client_id_val = token_data.get('client_id', 'system')
-        elif isinstance(token_data, str):
-            client_id_val = token_data
+        
+        if hasattr(model, "predict_proba"):
+            proba = float(model.predict_proba(X_final)[0][1])
+        else:
+            decision = float(model.decision_function(X_final)[0])
+            proba = 1.0 / (1.0 + np.exp(-decision))
+            
+        is_phishing = bool(proba >= threshold)
 
         return {
-            "status": "OK",
-            "predictions": [{
-                "model_prediction": {
-                    "label": label,
-                    "probability": phishing_prob,
-                    "malicious_file": None,
-                    "file_analysis": "not_supported"
-                }
-            }],
-            "metadata": {
-                "message_id": email_data.MessageId,
-                "threshold_used": threshold,
-                "timestamp": pd.Timestamp.now().isoformat(),
-                "analyzed_by": client_id_val
-            }
+            "status": "success",
+            "is_phishing": is_phishing,
+            "probability": proba,
+            "threshold": threshold
         }
 
-    except HTTPException:
-        raise
     except Exception as e:
-        print("ERROR en /predict | MessageId=" + email_data.MessageId + " | " + type(e).__name__)
-        raise HTTPException(status_code=500, detail="Error interno del servidor.")
+        raise HTTPException(status_code=500, detail=str(e))
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app:app", host="0.0.0.0", port=7860)
