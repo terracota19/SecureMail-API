@@ -1,7 +1,6 @@
 import re
 import joblib
 import numpy as np
-import torch
 import pandas as pd
 import json
 import os
@@ -13,25 +12,23 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from transformers import XLMRobertaTokenizer, XLMRobertaModel
+import onnxruntime as ort
+from tokenizers import Tokenizer
 from auth import auth_router, require_scope, TokenData
 
 # =============================================================================
-# CONFIGURACION GLOBAL
+# CONFIGURACIÓN GLOBAL
 # =============================================================================
 
-BERT_MODEL_NAME = 'xlm-roberta-base'
 MAX_LENGTH = 128
-EMBEDDING_DIM = 768
-DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, 'models/best_phishing_model.joblib')
 PIPELINE_PATH = os.path.join(BASE_DIR, 'objects/feature_scaler.joblib')
 METRICS_PATH = os.path.join(BASE_DIR, 'Metrics/validation_metrics.json')
+ONNX_MODEL_PATH = os.path.join(BASE_DIR, 'models/xlm_roberta.onnx')
 
 MISSING_VALUE_STR = 'No Data'
-BERT_SEP_TOKEN = '[SEP]'
+BERT_SEP_TOKEN = '</s>'  # Token de separación predeterminado para XLM-RoBERTa
 
 ML_ARTIFACTS = {}
 
@@ -120,7 +117,7 @@ def engineer_detailed_features(df_input):
     return df_eng
 
 # =============================================================================
-# CICLO DE VIDA (OPTIMIZADO PARA MEMORIA RAM)
+# CICLO DE VIDA (OPTIMIZADO PARA MEMORIA CON ONNX)
 # =============================================================================
 
 @asynccontextmanager
@@ -128,7 +125,7 @@ async def lifespan(app: FastAPI):
     print("Iniciando SecureMail API...")
     try:
         ML_ARTIFACTS['model'] = joblib.load(MODEL_PATH)
-        print("Modelo cargado desde " + MODEL_PATH)
+        print("Modelo principal cargado desde " + MODEL_PATH)
 
         ML_ARTIFACTS['pipeline'] = joblib.load(PIPELINE_PATH)
         print("Pipeline cargado desde " + PIPELINE_PATH)
@@ -137,37 +134,38 @@ async def lifespan(app: FastAPI):
             with open(METRICS_PATH, 'r') as f:
                 metrics = json.load(f)
             ML_ARTIFACTS['threshold'] = metrics.get('final_threshold', 0.5)
-            print("Umbral de decision cargado: " + str(ML_ARTIFACTS['threshold']))
+            print("Umbral de decisión cargado: " + str(ML_ARTIFACTS['threshold']))
         else:
-            print("Archivo de metricas no encontrado. Usando umbral 0.5.")
+            print("Archivo de métricas no encontrado. Usando umbral 0.5.")
             ML_ARTIFACTS['threshold'] = 0.5
 
-        print("Cargando BERT optimizado para RAM...")
-        # Carga desde la caché descargada previamente en el Dockerfile
-        ML_ARTIFACTS['tokenizer'] = XLMRobertaTokenizer.from_pretrained(
-            BERT_MODEL_NAME, 
-            local_files_only=True
+        print("Cargando motor ONNX Runtime para XLM-RoBERTa...")
+        
+        # Opciones de sesión para consumo mínimo de memoria RAM
+        opts = ort.SessionOptions()
+        opts.enable_cpu_mem_arena = False
+        opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+
+        ML_ARTIFACTS['bert_onnx'] = ort.InferenceSession(
+            ONNX_MODEL_PATH, 
+            sess_options=opts, 
+            providers=['CPUExecutionProvider']
         )
+
+        # Cargar tokenizador ligero usando la librería 'tokenizers'
+        ML_ARTIFACTS['tokenizer'] = Tokenizer.from_pretrained("xlm-roberta-base")
+        ML_ARTIFACTS['tokenizer'].enable_truncation(max_length=MAX_LENGTH)
+        ML_ARTIFACTS['tokenizer'].enable_padding(length=MAX_LENGTH)
         
-        # Carga el modelo usando float16 y low_cpu_mem_usage para no exceder los 512 MB de RAM
-        ML_ARTIFACTS['bert'] = XLMRobertaModel.from_pretrained(
-            BERT_MODEL_NAME,
-            torch_dtype=torch.float16,
-            low_cpu_mem_usage=True,
-            local_files_only=True
-        ).to(DEVICE).eval()
-        
-        print("BERT cargado con éxito en " + str(DEVICE))
+        print("Modelo ONNX cargado con éxito en CPU (consumo < 400MB RAM)")
 
     except Exception as e:
-        print("ERROR CRITICO EN STARTUP: " + str(e))
+        print("ERROR CRÍTICO EN STARTUP: " + str(e))
         raise RuntimeError("Fallo al inicializar los modelos de ML.") from e
 
     yield
 
     ML_ARTIFACTS.clear()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
     print("API detenida y recursos liberados.")
 
 # =============================================================================
@@ -175,7 +173,6 @@ async def lifespan(app: FastAPI):
 # =============================================================================
 
 app = FastAPI(title="SecureMail Phishing Detection API", version="2.0", lifespan=lifespan)
-
 app.include_router(auth_router)
 
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
@@ -231,7 +228,7 @@ async def predict(
             X_structured = ML_ARTIFACTS['pipeline'].transform(df_engineered)
             X_structured = X_structured.astype(np.float32)
         except Exception as e:
-            raise HTTPException(status_code=400, detail="Error al procesar las caracteristicas del correo.")
+            raise HTTPException(status_code=400, detail="Error al procesar las características del correo.")
 
         text_parts = [
             str(df_engineered.iloc[0].get('From', MISSING_VALUE_STR)),
@@ -243,19 +240,21 @@ async def predict(
         ]
         full_text = (" " + BERT_SEP_TOKEN + " ").join(text_parts)
 
-        bert_inputs = ML_ARTIFACTS['tokenizer'](
-            full_text,
-            return_tensors="pt",
-            max_length=MAX_LENGTH,
-            truncation=True,
-            padding='max_length'
-        ).to(DEVICE)
+        # Tokenización ligera a través de 'tokenizers'
+        encoded = ML_ARTIFACTS['tokenizer'].encode(full_text)
+        
+        input_ids = np.array([encoded.ids], dtype=np.int64)
+        attention_mask = np.array([encoded.attention_mask], dtype=np.int64)
 
-        with torch.no_grad():
-            bert_outputs = ML_ARTIFACTS['bert'](**bert_inputs)
+        # Inferencia con ONNX Runtime
+        onnx_inputs = {
+            'input_ids': input_ids,
+            'attention_mask': attention_mask
+        }
+        onnx_outputs = ML_ARTIFACTS['bert_onnx'].run(None, onnx_inputs)
 
-        # Se convierte a float32 y a numpy para que coincida con las entradas del modelo final
-        X_bert = bert_outputs.last_hidden_state[:, 0, :].to(torch.float32).cpu().numpy()
+        # Extraer el vector del token [CLS] / primer posición
+        X_bert = onnx_outputs[0][:, 0, :].astype(np.float32)
         X_final = np.hstack([X_bert, X_structured])
 
         phishing_prob = float(ML_ARTIFACTS['model'].predict_proba(X_final)[0][1])
