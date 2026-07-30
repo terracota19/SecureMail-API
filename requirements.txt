@@ -1,16 +1,10 @@
---extra-index-url https://download.pytorch.org/whl/cpu
+fastapi>=0.100.0
+uvicorn>=0.20.0
+pydantic>=2.0.0
 torch
 transformers
-fastapi>=0.110.0
-uvicorn>=0.28.0
-pydantic[email]>=2.0
-python-dotenv
-python-multipart
-pyjwt[crypto]>=2.8.0
-bcrypt>=4.0.0
 joblib
-numpy
 pandas
-category-encoders
-scikit-learn==1.6.1
-beautifulsoup4
+numpy
+spaces
+python-multipart
