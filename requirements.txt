@@ -9,6 +9,7 @@ joblib
 numpy
 pandas
 onnxruntime>=1.17.0
+tokenizers
 xgboost
 category-encoders
 scikit-learn==1.6.1
