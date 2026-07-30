@@ -46,7 +46,7 @@ model = None
 feature_scaler = None
 label_encoders = None
 decision_threshold = 0.5
-expected_features_count = 27  # Detectado dinámicamente según logs
+expected_features_count = 27
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -58,25 +58,24 @@ async def lifespan(app: FastAPI):
         model = joblib.load(MODEL_PATH)
         print(f"✅ Modelo principal cargado desde: {MODEL_PATH}")
 
-    # 2. Cargar Scaler y LabelEncoders
+    # 2. Cargar Scaler
     if os.path.exists(SCALER_PATH):
         feature_scaler = joblib.load(SCALER_PATH)
         print(f"✅ Scaler cargado desde: {SCALER_PATH}")
-        
-        # Detectar número de características esperadas
         if hasattr(feature_scaler, "n_features_in_"):
             expected_features_count = feature_scaler.n_features_in_
             print(f"ℹ️ Número de características esperadas por el Scaler: {expected_features_count}")
 
+    # 3. Cargar Encoders
     if os.path.exists(ENCODERS_PATH):
         label_encoders = joblib.load(ENCODERS_PATH)
         print(f"✅ LabelEncoders cargados desde: {ENCODERS_PATH}")
 
-    # 3. Cargar Umbral de Decisión
+    # 4. Cargar Umbral
     if os.path.exists(THRESHOLD_PATH):
         try:
             decision_threshold = float(joblib.load(THRESHOLD_PATH))
-            print(f"✅ Umbral de decisión cargado desde archivo: {decision_threshold}")
+            print(f"✅ Umbral de decisión cargado: {decision_threshold}")
         except Exception:
             decision_threshold = 0.5
     elif os.path.exists(THRESHOLD_MAP_PATH):
@@ -92,7 +91,7 @@ async def lifespan(app: FastAPI):
     print("API detenida y recursos liberados.")
 
 # ============================================================
-# CONFIGURACIÓN FASTAPI
+# FASTAPI CONFIG
 # ============================================================
 app = FastAPI(
     title="SecureMail Phishing Detection API",
@@ -123,40 +122,51 @@ class EmailInput(BaseModel):
     MessageId: str = Field(default="No Data")
 
 # ============================================================
-# HELPER: EXTRAER CARACTERÍSTICAS DE FALLBACK
+# RECONSTRUCTOR AUTÓNOMO DE 27 CARACTERÍSTICAS
 # ============================================================
-def extract_tabular_features(email_data: EmailInput, target_dim: int) -> np.ndarray:
-    """Crea una matriz numpy de forma (1, target_dim) asegurando nunca tener 0 características."""
-    urls = [u.strip() for u in email_data.Concatenated_URLs.split(",") if u.strip() and u.strip() != "No Data"]
+def build_27_features(email_data: EmailInput) -> np.ndarray:
+    body = email_data.Body if email_data.Body != "No Data" else ""
+    subject = email_data.Subject if email_data.Subject != "No Data" else ""
+    sender = email_data.From if email_data.From != "No Data" else ""
+    raw_urls = email_data.Concatenated_URLs if email_data.Concatenated_URLs != "No Data" else ""
     
-    # Heurísticas calculadas a partir del correo
-    feats = [
-        float(len(urls)),
-        float(len(email_data.Body) if email_data.Body != "No Data" else 0),
-        float(len(email_data.Subject) if email_data.Subject != "No Data" else 0),
-        1.0 if len(urls) > 0 else 0.0,
-        float(sum(u.count('.') for u in urls)),
-        float(sum(u.count('-') for u in urls)),
-        1.0 if re.search(r'verify|account|bank|login|update|password|urgent|security|action', email_data.Body, re.IGNORECASE) else 0.0,
-        1.0 if re.search(r'verify|account|bank|login|update|password|urgent|security|action', email_data.Subject, re.IGNORECASE) else 0.0,
-        float(len(email_data.From) if email_data.From != "No Data" else 0),
-        1.0 if "@" in email_data.From else 0.0
+    urls = [u.strip() for u in raw_urls.split(",") if u.strip()]
+    
+    # Construcción ordenada de métricas
+    f_num_urls = float(len(urls))
+    f_body_len = float(len(body))
+    f_subj_len = float(len(subject))
+    f_has_urls = 1.0 if len(urls) > 0 else 0.0
+    f_dots_in_urls = float(sum(u.count('.') for u in urls))
+    f_hyphens_in_urls = float(sum(u.count('-') for u in urls))
+    f_body_suspicious = 1.0 if re.search(r'verify|account|bank|login|update|password|urgent|security|action|confirm|click', body, re.IGNORECASE) else 0.0
+    f_subj_suspicious = 1.0 if re.search(r'verify|account|bank|login|update|password|urgent|security|action|confirm|click', subject, re.IGNORECASE) else 0.0
+    f_sender_len = float(len(sender))
+    f_valid_sender = 1.0 if "@" in sender else 0.0
+    f_num_slashes = float(sum(u.count('/') for u in urls))
+    f_num_digits_body = float(len(re.findall(r'\d', body)))
+    f_num_digits_subj = float(len(re.findall(r'\d', subject)))
+    f_has_ip_url = 1.0 if any(re.search(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', u) for u in urls) else 0.0
+
+    vector = [
+        f_num_urls, f_body_len, f_subj_len, f_has_urls, f_dots_in_urls,
+        f_hyphens_in_urls, f_body_suspicious, f_subj_suspicious, f_sender_len, f_valid_sender,
+        f_num_slashes, f_num_digits_body, f_num_digits_subj, f_has_ip_url
     ]
-    
-    # Rellenar con ceros hasta alcanzar exactamente target_dim (ej. 27 columnas)
-    if len(feats) < target_dim:
-        feats.extend([0.0] * (target_dim - len(feats)))
+
+    # Rellenar con ceros hasta completar exactamente las 27 columnas del Scaler
+    if len(vector) < expected_features_count:
+        vector.extend([0.0] * (expected_features_count - len(vector)))
     else:
-        feats = feats[:target_dim]
-        
-    return np.array([feats], dtype=np.float32)
+        vector = vector[:expected_features_count]
+
+    return np.array([vector], dtype=np.float32)
 
 # ============================================================
 # ENDPOINTS
 # ============================================================
 @app.api_route("/", methods=["GET", "HEAD"])
 async def root():
-    """Responde a peticiones GET y HEAD para el Health Check de Render."""
     return {"message": "SecureMail API active and operational."}
 
 @app.post("/predict")
@@ -171,7 +181,7 @@ async def predict(
         )
 
     try:
-        # 1. Modo nativo con utils.py
+        # 1. Transformación si utils está presente
         if utils is not None and hasattr(utils, "transform_preprocess_additional_features"):
             raw_dict = {
                 "From": email_data.From,
@@ -185,23 +195,22 @@ async def predict(
             input_df = pd.DataFrame([raw_dict])
             X_input = utils.transform_preprocess_additional_features(input_df, label_encoders, feature_scaler)
         
-        # 2. Modo Fallback (sin utils.py)
+        # 2. Transformación Fallback autónoma
         else:
-            raw_vector = extract_tabular_features(email_data, expected_features_count)
-            
-            # Si el modelo NO es un Pipeline (es un estimador puro) y tenemos Scaler, aplicamos transform
-            if feature_scaler is not None and not hasattr(model, "named_steps"):
+            X_raw = build_27_features(email_data)
+            if feature_scaler is not None:
                 try:
-                    X_input = feature_scaler.transform(raw_vector)
-                except Exception:
-                    X_input = raw_vector
+                    X_input = feature_scaler.transform(X_raw)
+                except Exception as scale_err:
+                    print(f"⚠️ Aviso al escalar: {scale_err}. Usando datos directos.")
+                    X_input = X_raw
             else:
-                X_input = raw_vector
+                X_input = X_raw
 
-        # 3. Predicción / Inferencia
+        # 3. Predicción
         if hasattr(model, "predict_proba"):
-            probabilities = model.predict_proba(X_input)[0]
-            phishing_prob = float(probabilities[1]) if len(probabilities) > 1 else float(probabilities[0])
+            probs = model.predict_proba(X_input)[0]
+            phishing_prob = float(probs[1]) if len(probs) > 1 else float(probs[0])
         else:
             pred = model.predict(X_input)[0]
             phishing_prob = 1.0 if pred == 1 else 0.0
