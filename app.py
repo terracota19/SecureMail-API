@@ -4,56 +4,65 @@ import json
 import joblib
 import numpy as np
 import pandas as pd
-from urllib.parse import urlparse
-from contextlib import asynccontextmanager
 from typing import List, Optional
+from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException, Depends, Header
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-# Cargar módulos de autenticación locales
+# Cargar autenticación
 from auth import auth_router, require_scope, TokenData
 
+# Importar tus propios módulos de entrenamiento
+import config
+import utils
+
 # ============================================================
-# VARIABLES GLOBALES Y CARGA DE MODELOS
+# VARIABLES GLOBALES Y CARGA DE MODELOS Y BERT
 # ============================================================
 model = None
+tokenizer = None
+bert_model = None
 feature_scaler = None
+label_encoders = None
 decision_threshold = 0.5
-
-MODELS_DIR = os.getenv("MODELS_DIR", "/secure.mail/models")
-OBJECTS_DIR = os.getenv("OBJECTS_DIR", "/secure.mail/objects")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global model, feature_scaler, decision_threshold
+    global model, tokenizer, bert_model, feature_scaler, label_encoders, decision_threshold
     print("Iniciando SecureMail API...")
-    
-    # 1. Cargar Modelo Principal
-    model_path = os.path.join(MODELS_DIR, "best_phishing_model.joblib")
+
+    # 1. Cargar modelo principal de clasificación
+    model_path = os.path.join(config.MODELS_DIR if hasattr(config, 'MODELS_DIR') else "/secure.mail/models", "best_phishing_model.joblib")
     if os.path.exists(model_path):
         model = joblib.load(model_path)
-        print(f"Modelo principal cargado desde: {model_path}")
-    else:
-        print(f"⚠️ ALERTA: No se encontró el modelo en {model_path}")
+        print(f"✅ Modelo principal cargado desde: {model_path}")
 
-    # 2. Cargar Scaler / Feature Pipeline
-    scaler_path = os.path.join(OBJECTS_DIR, "feature_scaler.joblib")
+    # 2. Cargar Scaler y LabelEncoders desde tus artefactos
+    scaler_path = getattr(config, 'SCALER_PATH', "/secure.mail/objects/feature_scaler.joblib")
     if os.path.exists(scaler_path):
         feature_scaler = joblib.load(scaler_path)
-        print(f"Pipeline de características cargado desde: {scaler_path}")
-    else:
-        print(f"⚠️ ALERTA: No se encontró el escalador en {scaler_path}")
+        print(f"✅ Scaler cargado desde: {scaler_path}")
 
-    # 3. Cargar Umbral de Decisión (si existe)
-    threshold_path = os.path.join(OBJECTS_DIR, "decision_threshold.joblib")
+    encoders_path = getattr(config, 'ENCODERS_PATH', "/secure.mail/objects/label_encoders.joblib")
+    if os.path.exists(encoders_path):
+        label_encoders = joblib.load(encoders_path)
+        print(f"✅ LabelEncoders cargados desde: {encoders_path}")
+
+    # 3. Cargar Modelo BERT y Tokenizer usando tu utils
+    print("Cargando modelo BERT y Tokenizer...")
+    tokenizer, bert_model = utils.get_bert_model_and_tokenizer()
+    print(f"✅ BERT cargado correctamente en dispositivo: {config.DEVICE}")
+
+    # 4. Umbral de Decisión
+    threshold_path = "/secure.mail/objects/decision_threshold.joblib"
     if os.path.exists(threshold_path):
         decision_threshold = float(joblib.load(threshold_path))
-        print(f"Umbral de decisión cargado: {decision_threshold}")
+        print(f"✅ Umbral de decisión cargado: {decision_threshold}")
 
     yield
     print("API detenida y recursos liberados.")
@@ -75,11 +84,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Incluir rutas de autenticación JWT (/auth/token)
 app.include_router(auth_router)
 
 # ============================================================
-# ESQUEMAS DE ENTRADA / SALIDA (PYDANTIC)
+# ESQUEMAS DE ENTRADA
 # ============================================================
 class EmailInput(BaseModel):
     From: str = Field(default="No Data")
@@ -91,39 +99,7 @@ class EmailInput(BaseModel):
     MessageId: str = Field(default="No Data")
 
 # ============================================================
-# FUNCIÓN DE EXTRACCIÓN DE CARACTERÍSTICAS
-# ============================================================
-def extract_features_from_email(email: EmailInput) -> pd.DataFrame:
-    """
-    Extrae las características del correo y garantiza que el DataFrame devuelto
-    tenga las columnas exactas que espera el scaler / modelo.
-    """
-    urls = email.Concatenated_URLs.split(",") if email.Concatenated_URLs != "No Data" else []
-    urls = [u.strip() for u in urls if u.strip() and u.strip() != "No Data"]
-
-    # Diccionario base con características habituales
-    features = {
-        "url_count": len(urls),
-        "body_length": len(email.Body) if email.Body != "No Data" else 0,
-        "subject_length": len(email.Subject) if email.Subject != "No Data" else 0,
-        "has_urls": 1 if len(urls) > 0 else 0,
-        "num_dots_urls": sum(u.count('.') for u in urls),
-        "num_hyphens_urls": sum(u.count('-') for u in urls),
-        "has_suspicious_words": 1 if re.search(r'verify|account|bank|login|update|password|urgent|security', email.Body, re.IGNORECASE) else 0
-    }
-
-    df = pd.DataFrame([features])
-
-    # Si el scaler fue entrenado con nombres de columna específicos (scikit-learn >= 1.0)
-    if feature_scaler is not None and hasattr(feature_scaler, "feature_names_in_"):
-        expected_columns = list(feature_scaler.feature_names_in_)
-        # Reordenar y rellenar con 0 cualquier columna que falte
-        df = df.reindex(columns=expected_columns, fill_value=0)
-
-    return df
-
-# ============================================================
-# ENDPOINTS DE LA API
+# ENDPOINTS
 # ============================================================
 @app.get("/")
 async def root():
@@ -134,30 +110,53 @@ async def predict(
     email_data: EmailInput,
     token_data: TokenData = Depends(require_scope("predict"))
 ):
-    if model is None or feature_scaler is None:
+    if model is None or feature_scaler is None or bert_model is None:
         raise HTTPException(
             status_code=503, 
-            detail="Servidor no listo: los modelos de ML no se cargaron correctamente."
+            detail="El servidor no está listo: los modelos de ML/BERT no han sido cargados."
         )
 
     try:
-        # 1. Extraer DataFrame de características
-        features_df = extract_features_from_email(email_data)
+        # 1. Crear DataFrame con 1 fila representando el correo
+        raw_dict = {
+            "From": email_data.From,
+            "To": email_data.To,
+            "Subject": email_data.Subject,
+            "Body": email_data.Body,
+            "Date": email_data.Date,
+            "Concatenated_URLs": email_data.Concatenated_URLs,
+            "MessageId": email_data.MessageId
+        }
+        input_df = pd.DataFrame([raw_dict])
 
-        # Validación estricta para evitar array con 0 características (shape=(1,0))
-        if features_df.empty or features_df.shape[1] == 0:
-            raise ValueError("No se pudieron extraer características válidas del correo.")
+        # 2. Generar Texto Concatenado para BERT (Subject + Body + URLs)
+        text_cols = getattr(config, 'TEXT_COLUMNS_FOR_BERT', ['Subject', 'Body', 'Concatenated_URLs'])
+        sep_token = getattr(config, 'BERT_SEP_TOKEN', '[SEP]')
+        
+        text_list = []
+        for col in text_cols:
+            val = input_df[col].fillna("").astype(str) if col in input_df.columns else pd.Series([""])
+            text_list.append(val)
+        
+        combined_text = pd.concat(text_list, axis=1).apply(lambda x: f" {sep_token} ".join(x), axis=1).tolist()
 
-        # 2. Escalar características
-        X_scaled = feature_scaler.transform(features_df)
+        # 3. Generar Embeddings de BERT
+        bert_embeddings = utils.generate_bert_embeddings(combined_text, tokenizer, bert_model)
 
-        # 3. Predecir probabilidades
+        # 4. Transformar y escalar las características adicionales (Tabulares)
+        additional_scaled = utils.transform_preprocess_additional_features(
+            input_df, label_encoders, feature_scaler
+        )
+
+        # 5. Combinar Embeddings + Características Adicionales Escaladas (np.hstack)
+        X_input = np.hstack([bert_embeddings, additional_scaled])
+
+        # 6. Realizar Predicción final con el Modelo de ML
         if hasattr(model, "predict_proba"):
-            probabilities = model.predict_proba(X_scaled)[0]
+            probabilities = model.predict_proba(X_input)[0]
             phishing_prob = float(probabilities[1])
         else:
-            # Fallback en caso de modelos que no implementan predict_proba
-            pred = model.predict(X_scaled)[0]
+            pred = model.predict(X_input)[0]
             phishing_prob = 1.0 if pred == 1 else 0.0
 
         label = "Phishing" if phishing_prob >= decision_threshold else "Legitimate"
@@ -177,5 +176,5 @@ async def predict(
         print(f"ERROR en /predict | MessageId={email_data.MessageId} | {type(e).__name__}: {str(e)}")
         raise HTTPException(
             status_code=400,
-            detail=f"Error al procesar las características del correo: {str(e)}"
+            detail=f"Error en la inferencia del modelo: {str(e)}"
         )
