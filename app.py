@@ -127,11 +127,14 @@ def engineer_detailed_features(df_input):
 async def lifespan(app: FastAPI):
     print("Iniciando SecureMail API...")
     try:
-        ML_ARTIFACTS['model'] = joblib.load(MODEL_PATH)
-        print("Modelo cargado desde " + MODEL_PATH)
+        # Solo cargamos lo ligero para abrir el puerto rápido
+        if os.path.exists(MODEL_PATH):
+            ML_ARTIFACTS['model'] = joblib.load(MODEL_PATH)
+            print("Modelo cargado desde " + MODEL_PATH)
 
-        ML_ARTIFACTS['pipeline'] = joblib.load(PIPELINE_PATH)
-        print("Pipeline cargado desde " + PIPELINE_PATH)
+        if os.path.exists(PIPELINE_PATH):
+            ML_ARTIFACTS['pipeline'] = joblib.load(PIPELINE_PATH)
+            print("Pipeline cargado desde " + PIPELINE_PATH)
 
         if os.path.exists(METRICS_PATH):
             with open(METRICS_PATH, 'r') as f:
@@ -139,22 +142,13 @@ async def lifespan(app: FastAPI):
             ML_ARTIFACTS['threshold'] = metrics.get('final_threshold', 0.5)
             print("Umbral de decision cargado: " + str(ML_ARTIFACTS['threshold']))
         else:
-            print("Archivo de metricas no encontrado. Usando umbral 0.5.")
             ML_ARTIFACTS['threshold'] = 0.5
 
-        print("Cargando BERT...")
-        import gc
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            
-        ML_ARTIFACTS['tokenizer'] = XLMRobertaTokenizer.from_pretrained(BERT_MODEL_NAME)
-        ML_ARTIFACTS['bert'] = XLMRobertaModel.from_pretrained(BERT_MODEL_NAME).to(DEVICE).eval()
-        print("BERT cargado en " + str(DEVICE))
+        print("¡Servicios básicos listos! El puerto se abrirá de inmediato.")
 
     except Exception as e:
         print("ERROR CRITICO EN STARTUP: " + str(e))
-        raise RuntimeError("Fallo al inicializar los modelos de ML.") from e
+        raise RuntimeError("Fallo al inicializar los modelos.") from e
 
     yield
 
