@@ -18,11 +18,15 @@ from pydantic import BaseModel, Field
 # Cargar autenticación desde auth.py
 from auth import auth_router, require_scope, TokenData
 
-# Importar utils local (asegúrate de que utils.py existe y se copia en Docker)
+# ============================================================
+# IMPORTACIÓN SEGURA DE UTILS (EVITA CAÍDAS SI NO EXISTE)
+# ============================================================
 try:
     import utils
+    print("✅ Módulo 'utils' cargado correctamente.")
 except ModuleNotFoundError:
     utils = None
+    print("⚠️ Módulo 'utils' no encontrado en el entorno. Funcionando en modo fallback.")
 
 # ============================================================
 # CONFIGURACIÓN INTERNA (Sin depender de config.py)
@@ -68,9 +72,9 @@ async def lifespan(app: FastAPI):
         label_encoders = joblib.load(ENCODERS_PATH)
         print(f"✅ LabelEncoders cargados desde: {ENCODERS_PATH}")
 
-    # 3. Cargar Modelo BERT y Tokenizer desde utils si está disponible
-    if utils and hasattr(utils, "get_bert_model_and_tokenizer"):
-        print("Cargando modelo BERT y Tokenizer...")
+    # 3. Cargar Modelo BERT y Tokenizer solo si utils está presente
+    if utils is not None and hasattr(utils, "get_bert_model_and_tokenizer"):
+        print("Cargando modelo BERT y Tokenizer desde utils...")
         tokenizer, bert_model = utils.get_bert_model_and_tokenizer()
         print(f"✅ BERT cargado correctamente.")
 
@@ -132,7 +136,6 @@ async def predict(
         )
 
     try:
-        # 1. Crear DataFrame con 1 fila representando el correo
         raw_dict = {
             "From": email_data.From,
             "To": email_data.To,
@@ -144,8 +147,8 @@ async def predict(
         }
         input_df = pd.DataFrame([raw_dict])
 
-        # 2. Inferencia con BERT (si utils está cargado)
-        if utils and bert_model and tokenizer:
+        # Si tenemos utils cargado y BERT funcionando
+        if utils is not None and bert_model is not None and tokenizer is not None:
             text_list = []
             for col in TEXT_COLUMNS_FOR_BERT:
                 val = input_df[col].fillna("").astype(str) if col in input_df.columns else pd.Series([""])
@@ -159,10 +162,15 @@ async def predict(
             )
             X_input = np.hstack([bert_embeddings, additional_scaled])
         else:
-            # Transformación estándar en caso de no contar con BERT
+            # Fallback seguro: extraer características tabulares con el Scaler
+            # Si el scaler espera nombres de columnas, reindexamos el DataFrame
+            if hasattr(feature_scaler, "feature_names_in_"):
+                expected_cols = list(feature_scaler.feature_names_in_)
+                input_df = input_df.reindex(columns=expected_cols, fill_value=0)
+            
             X_input = feature_scaler.transform(input_df)
 
-        # 3. Predicción
+        # Predicción
         if hasattr(model, "predict_proba"):
             probabilities = model.predict_proba(X_input)[0]
             phishing_prob = float(probabilities[1])
