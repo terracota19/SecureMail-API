@@ -230,24 +230,23 @@ def health_check():
         "status": "online",
         "models_loaded": bool(ML_ARTIFACTS),
     }
-
 @app.post("/predict")
 async def predict(
     email_data: EmailInput,
     token_data: TokenData = Depends(require_scope("predict"))
 ):
     try:
-        # Verificamos si BERT se está cargando o necesita inicializarse
-        if 'bert' not in ML_ARTIFACTS:
-            print("Inicializando BERT bajo demanda (primera petición)...")
+        # Carga bajo demanda ultra-optimizada para evitar Out of Memory en Render Free
+        if 'bert' not in ML_ARTIFACTS or 'tokenizer' not in ML_ARTIFACTS:
+            print("Cargando BERT bajo demanda con optimización estricta de CPU...")
             import gc
+            
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             
-            # Puedes retornar un aviso previo o proceder a la carga
-            # Opcionalmente, si prefieres avisar al cliente antes de bloquear la respuesta:
-            # return {"status": "INITIALIZING", "message": "El modelo se está preparando para la primera consulta. Inténtalo de nuevo en unos segundos."}
+            # Forzar a PyTorch a usar un solo hilo para evitar picos de memoria en la CPU
+            torch.set_num_threads(1)
             
             ML_ARTIFACTS['tokenizer'] = XLMRobertaTokenizer.from_pretrained(BERT_MODEL_NAME)
             ML_ARTIFACTS['bert'] = XLMRobertaModel.from_pretrained(
@@ -255,13 +254,21 @@ async def predict(
                 torch_dtype=torch.float16,
                 low_cpu_mem_usage=True
             ).to(DEVICE).eval()
-            print("BERT inicializado correctamente en caliente.")
+            
+            gc.collect()
+            print("¡BERT cargado con éxito bajo demanda!")
+
+        if 'model' not in ML_ARTIFACTS or 'pipeline' not in ML_ARTIFACTS:
+            raise HTTPException(status_code=503, detail="Los modelos base no están inicializados.")
 
         df_raw = pd.DataFrame([email_data.model_dump()])
         df_engineered = engineer_detailed_features(df_raw)
 
-        X_structured = ML_ARTIFACTS['pipeline'].transform(df_engineered)
-        X_structured = X_structured.astype(np.float32)
+        try:
+            X_structured = ML_ARTIFACTS['pipeline'].transform(df_engineered)
+            X_structured = X_structured.astype(np.float32)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail="Error al procesar las caracteristicas del correo.")
 
         text_parts = [
             str(df_engineered.iloc[0].get('From', MISSING_VALUE_STR)),
