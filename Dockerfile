@@ -33,9 +33,14 @@ USER root
 
 # Copiar código y artefactos necesarios de manera ordenada
 COPY app.py .
+COPY auth.py ./
+COPY utils.py ./
+
 COPY models/ ./models/
 COPY objects/ ./objects/
 COPY Metrics/ ./Metrics/
+
+
 
 RUN chown -R appuser:appgroup /secure.mail
 USER appuser
