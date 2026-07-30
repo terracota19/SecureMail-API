@@ -122,9 +122,9 @@ class EmailInput(BaseModel):
     MessageId: str = Field(default="No Data")
 
 # ============================================================
-# RECONSTRUCTOR AUTÓNOMO DE 27 CARACTERÍSTICAS
+# RECONSTRUCTOR AUTÓNOMO EN DATAFRAME (EVITA SHAPE=(1,0))
 # ============================================================
-def build_27_features(email_data: EmailInput) -> np.ndarray:
+def build_fallback_dataframe(email_data: EmailInput, scaler_obj) -> pd.DataFrame:
     body = email_data.Body if email_data.Body != "No Data" else ""
     subject = email_data.Subject if email_data.Subject != "No Data" else ""
     sender = email_data.From if email_data.From != "No Data" else ""
@@ -132,35 +132,44 @@ def build_27_features(email_data: EmailInput) -> np.ndarray:
     
     urls = [u.strip() for u in raw_urls.split(",") if u.strip()]
     
-    # Construcción ordenada de métricas
-    f_num_urls = float(len(urls))
-    f_body_len = float(len(body))
-    f_subj_len = float(len(subject))
-    f_has_urls = 1.0 if len(urls) > 0 else 0.0
-    f_dots_in_urls = float(sum(u.count('.') for u in urls))
-    f_hyphens_in_urls = float(sum(u.count('-') for u in urls))
-    f_body_suspicious = 1.0 if re.search(r'verify|account|bank|login|update|password|urgent|security|action|confirm|click', body, re.IGNORECASE) else 0.0
-    f_subj_suspicious = 1.0 if re.search(r'verify|account|bank|login|update|password|urgent|security|action|confirm|click', subject, re.IGNORECASE) else 0.0
-    f_sender_len = float(len(sender))
-    f_valid_sender = 1.0 if "@" in sender else 0.0
-    f_num_slashes = float(sum(u.count('/') for u in urls))
-    f_num_digits_body = float(len(re.findall(r'\d', body)))
-    f_num_digits_subj = float(len(re.findall(r'\d', subject)))
-    f_has_ip_url = 1.0 if any(re.search(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', u) for u in urls) else 0.0
-
-    vector = [
-        f_num_urls, f_body_len, f_subj_len, f_has_urls, f_dots_in_urls,
-        f_hyphens_in_urls, f_body_suspicious, f_subj_suspicious, f_sender_len, f_valid_sender,
-        f_num_slashes, f_num_digits_body, f_num_digits_subj, f_has_ip_url
+    # 1. Extraer características base
+    feats = [
+        float(len(urls)),
+        float(len(body)),
+        float(len(subject)),
+        1.0 if len(urls) > 0 else 0.0,
+        float(sum(u.count('.') for u in urls)),
+        float(sum(u.count('-') for u in urls)),
+        1.0 if re.search(r'verify|account|bank|login|update|password|urgent|security|action|confirm|click', body, re.IGNORECASE) else 0.0,
+        1.0 if re.search(r'verify|account|bank|login|update|password|urgent|security|action|confirm|click', subject, re.IGNORECASE) else 0.0,
+        float(len(sender)),
+        1.0 if "@" in sender else 0.0,
+        float(sum(u.count('/') for u in urls)),
+        float(len(re.findall(r'\d', body))),
+        float(len(re.findall(r'\d', subject))),
+        1.0 if any(re.search(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', u) for u in urls) else 0.0
     ]
 
-    # Rellenar con ceros hasta completar exactamente las 27 columnas del Scaler
-    if len(vector) < expected_features_count:
-        vector.extend([0.0] * (expected_features_count - len(vector)))
-    else:
-        vector = vector[:expected_features_count]
+    target_dim = 27
+    if scaler_obj is not None and hasattr(scaler_obj, "n_features_in_"):
+        target_dim = scaler_obj.n_features_in_
 
-    return np.array([vector], dtype=np.float32)
+    # Rellenar con ceros hasta target_dim
+    if len(feats) < target_dim:
+        feats.extend([0.0] * (target_dim - len(feats)))
+    else:
+        feats = feats[:target_dim]
+
+    # 2. Si el scaler requiere nombres de columna específicos, los aplicamos
+    if scaler_obj is not None and hasattr(scaler_obj, "feature_names_in_"):
+        col_names = list(scaler_obj.feature_names_in_)
+        # Si el número coincide creamos el DataFrame exacto
+        if len(col_names) == len(feats):
+            return pd.DataFrame([feats], columns=col_names)
+
+    # Nombres por defecto si no están en el scaler
+    cols = [f"feature_{i}" for i in range(len(feats))]
+    return pd.DataFrame([feats], columns=cols)
 
 # ============================================================
 # ENDPOINTS
@@ -181,7 +190,7 @@ async def predict(
         )
 
     try:
-        # 1. Transformación si utils está presente
+        # 1. Transformación si utils.py existe
         if utils is not None and hasattr(utils, "transform_preprocess_additional_features"):
             raw_dict = {
                 "From": email_data.From,
@@ -195,17 +204,23 @@ async def predict(
             input_df = pd.DataFrame([raw_dict])
             X_input = utils.transform_preprocess_additional_features(input_df, label_encoders, feature_scaler)
         
-        # 2. Transformación Fallback autónoma
+        # 2. Transformación Fallback usando DataFrame compatible
         else:
-            X_raw = build_27_features(email_data)
+            df_input = build_fallback_dataframe(email_data, feature_scaler)
+            
+            # Escalar si existe el Scaler
             if feature_scaler is not None:
                 try:
-                    X_input = feature_scaler.transform(X_raw)
+                    # Si el scaler requiere numpy array sin nombres:
+                    if hasattr(feature_scaler, "feature_names_in_"):
+                        X_input = feature_scaler.transform(df_input)
+                    else:
+                        X_input = feature_scaler.transform(df_input.values)
                 except Exception as scale_err:
-                    print(f"⚠️ Aviso al escalar: {scale_err}. Usando datos directos.")
-                    X_input = X_raw
+                    print(f"⚠️ Aviso al escalar ({scale_err}). Pasando valores directos.")
+                    X_input = df_input.values
             else:
-                X_input = X_raw
+                X_input = df_input.values
 
         # 3. Predicción
         if hasattr(model, "predict_proba"):
