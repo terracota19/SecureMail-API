@@ -13,3 +13,4 @@ numpy
 pandas
 category-encoders
 scikit-learn==1.6.1
+beautifulsoup4
