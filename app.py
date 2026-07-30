@@ -46,7 +46,7 @@ model = None
 feature_scaler = None
 label_encoders = None
 decision_threshold = 0.5
-expected_features_count = 101  # Valor por defecto detectado en tus notebooks
+expected_features_count = 27  # Detectado dinámicamente según logs
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -63,7 +63,7 @@ async def lifespan(app: FastAPI):
         feature_scaler = joblib.load(SCALER_PATH)
         print(f"✅ Scaler cargado desde: {SCALER_PATH}")
         
-        # Detectar cuántas características espera el Scaler
+        # Detectar número de características esperadas
         if hasattr(feature_scaler, "n_features_in_"):
             expected_features_count = feature_scaler.n_features_in_
             print(f"ℹ️ Número de características esperadas por el Scaler: {expected_features_count}")
@@ -76,7 +76,7 @@ async def lifespan(app: FastAPI):
     if os.path.exists(THRESHOLD_PATH):
         try:
             decision_threshold = float(joblib.load(THRESHOLD_PATH))
-            print(f"✅ Umbral de decisión cargado desde file: {decision_threshold}")
+            print(f"✅ Umbral de decisión cargado desde archivo: {decision_threshold}")
         except Exception:
             decision_threshold = 0.5
     elif os.path.exists(THRESHOLD_MAP_PATH):
@@ -123,30 +123,30 @@ class EmailInput(BaseModel):
     MessageId: str = Field(default="No Data")
 
 # ============================================================
-# HELPER: CONSTRUCCIÓN DE VECTOR DE CARACTERÍSTICAS
+# HELPER: EXTRAER CARACTERÍSTICAS DE FALLBACK
 # ============================================================
 def extract_tabular_features(email_data: EmailInput, target_dim: int) -> np.ndarray:
-    """Extrae métricas numéricas del correo y asegura un vector del tamaño exacto esperado por el modelo."""
+    """Crea una matriz numpy de forma (1, target_dim) asegurando nunca tener 0 características."""
     urls = [u.strip() for u in email_data.Concatenated_URLs.split(",") if u.strip() and u.strip() != "No Data"]
     
-    # Extraer características heurísticas principales
+    # Heurísticas calculadas a partir del correo
     feats = [
-        len(urls),                                              # f0: Recuento de URLs
-        len(email_data.Body) if email_data.Body != "No Data" else 0,   # f1: Longitud del cuerpo
-        len(email_data.Subject) if email_data.Subject != "No Data" else 0, # f2: Longitud del asunto
-        1 if len(urls) > 0 else 0,                               # f3: Tiene URLs
-        sum(u.count('.') for u in urls),                         # f4: Puntos en URLs
-        sum(u.count('-') for u in urls),                         # f5: Guiones en URLs
-        1 if re.search(r'verify|account|bank|login|update|password|urgent|security|action', email_data.Body, re.IGNORECASE) else 0, # f6: Palabras sospechosas cuerpo
-        1 if re.search(r'verify|account|bank|login|update|password|urgent|security|action', email_data.Subject, re.IGNORECASE) else 0, # f7: Palabras sospechosas asunto
-        len(email_data.From) if email_data.From != "No Data" else 0,   # f8: Longitud del remitente
-        1 if "@" in email_data.From else 0                       # f9: Formato remitente válido
+        float(len(urls)),
+        float(len(email_data.Body) if email_data.Body != "No Data" else 0),
+        float(len(email_data.Subject) if email_data.Subject != "No Data" else 0),
+        1.0 if len(urls) > 0 else 0.0,
+        float(sum(u.count('.') for u in urls)),
+        float(sum(u.count('-') for u in urls)),
+        1.0 if re.search(r'verify|account|bank|login|update|password|urgent|security|action', email_data.Body, re.IGNORECASE) else 0.0,
+        1.0 if re.search(r'verify|account|bank|login|update|password|urgent|security|action', email_data.Subject, re.IGNORECASE) else 0.0,
+        float(len(email_data.From) if email_data.From != "No Data" else 0),
+        1.0 if "@" in email_data.From else 0.0
     ]
     
-    # Ajustar exactamente a la dimensión `target_dim` (ej. 101 columnas)
+    # Rellenar con ceros hasta alcanzar exactamente target_dim (ej. 27 columnas)
     if len(feats) < target_dim:
         feats.extend([0.0] * (target_dim - len(feats)))
-    elif len(feats) > target_dim:
+    else:
         feats = feats[:target_dim]
         
     return np.array([feats], dtype=np.float32)
@@ -154,8 +154,9 @@ def extract_tabular_features(email_data: EmailInput, target_dim: int) -> np.ndar
 # ============================================================
 # ENDPOINTS
 # ============================================================
-@app.get("/")
+@app.api_route("/", methods=["GET", "HEAD"])
 async def root():
+    """Responde a peticiones GET y HEAD para el Health Check de Render."""
     return {"message": "SecureMail API active and operational."}
 
 @app.post("/predict")
@@ -170,7 +171,7 @@ async def predict(
         )
 
     try:
-        # 1. Si utils está presente, intentar usar la transformación original
+        # 1. Modo nativo con utils.py
         if utils is not None and hasattr(utils, "transform_preprocess_additional_features"):
             raw_dict = {
                 "From": email_data.From,
@@ -184,28 +185,23 @@ async def predict(
             input_df = pd.DataFrame([raw_dict])
             X_input = utils.transform_preprocess_additional_features(input_df, label_encoders, feature_scaler)
         
-        # 2. Si no hay utils (Fallback autónomo)
+        # 2. Modo Fallback (sin utils.py)
         else:
             raw_vector = extract_tabular_features(email_data, expected_features_count)
             
-            # Aplicar StandardScaler si está cargado
-            if feature_scaler is not None:
+            # Si el modelo NO es un Pipeline (es un estimador puro) y tenemos Scaler, aplicamos transform
+            if feature_scaler is not None and not hasattr(model, "named_steps"):
                 try:
                     X_input = feature_scaler.transform(raw_vector)
-                except Exception as scale_err:
-                    print(f"⚠️ Advertencia al escalar: {scale_err}. Usando características sin escalar.")
+                except Exception:
                     X_input = raw_vector
             else:
                 X_input = raw_vector
 
-        # 3. Inferencia con el modelo de ML
+        # 3. Predicción / Inferencia
         if hasattr(model, "predict_proba"):
             probabilities = model.predict_proba(X_input)[0]
-            # Si la salida devuelve 2 clases [prob_legit, prob_phishing]
-            if len(probabilities) > 1:
-                phishing_prob = float(probabilities[1])
-            else:
-                phishing_prob = float(probabilities[0])
+            phishing_prob = float(probabilities[1]) if len(probabilities) > 1 else float(probabilities[0])
         else:
             pred = model.predict(X_input)[0]
             phishing_prob = 1.0 if pred == 1 else 0.0
