@@ -12,23 +12,18 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-import onnxruntime as ort
-from tokenizers import Tokenizer
 from auth import auth_router, require_scope, TokenData
 
 # =============================================================================
 # CONFIGURACIÓN GLOBAL
 # =============================================================================
 
-MAX_LENGTH = 128
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, 'models/best_phishing_model.joblib')
 PIPELINE_PATH = os.path.join(BASE_DIR, 'objects/feature_scaler.joblib')
 METRICS_PATH = os.path.join(BASE_DIR, 'Metrics/validation_metrics.json')
-ONNX_MODEL_PATH = os.path.join(BASE_DIR, 'models/xlm_roberta.onnx')
 
 MISSING_VALUE_STR = 'No Data'
-BERT_SEP_TOKEN = '</s>'  # Token de separación predeterminado para XLM-RoBERTa
 
 ML_ARTIFACTS = {}
 
@@ -117,7 +112,7 @@ def engineer_detailed_features(df_input):
     return df_eng
 
 # =============================================================================
-# CICLO DE VIDA (OPTIMIZADO PARA MEMORIA CON ONNX)
+# CICLO DE VIDA (LIFESPAN)
 # =============================================================================
 
 @asynccontextmanager
@@ -125,10 +120,13 @@ async def lifespan(app: FastAPI):
     print("Iniciando SecureMail API...")
     try:
         ML_ARTIFACTS['model'] = joblib.load(MODEL_PATH)
-        print("Modelo principal cargado desde " + MODEL_PATH)
+        print("Modelo principal cargado desde: " + MODEL_PATH)
 
-        ML_ARTIFACTS['pipeline'] = joblib.load(PIPELINE_PATH)
-        print("Pipeline cargado desde " + PIPELINE_PATH)
+        if os.path.exists(PIPELINE_PATH):
+            ML_ARTIFACTS['pipeline'] = joblib.load(PIPELINE_PATH)
+            print("Pipeline de características cargado desde: " + PIPELINE_PATH)
+        else:
+            ML_ARTIFACTS['pipeline'] = None
 
         if os.path.exists(METRICS_PATH):
             with open(METRICS_PATH, 'r') as f:
@@ -138,26 +136,6 @@ async def lifespan(app: FastAPI):
         else:
             print("Archivo de métricas no encontrado. Usando umbral 0.5.")
             ML_ARTIFACTS['threshold'] = 0.5
-
-        print("Cargando motor ONNX Runtime para XLM-RoBERTa...")
-        
-        # Opciones de sesión para consumo mínimo de memoria RAM
-        opts = ort.SessionOptions()
-        opts.enable_cpu_mem_arena = False
-        opts.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-
-        ML_ARTIFACTS['bert_onnx'] = ort.InferenceSession(
-            ONNX_MODEL_PATH, 
-            sess_options=opts, 
-            providers=['CPUExecutionProvider']
-        )
-
-        # Cargar tokenizador ligero usando la librería 'tokenizers'
-        ML_ARTIFACTS['tokenizer'] = Tokenizer.from_pretrained("xlm-roberta-base")
-        ML_ARTIFACTS['tokenizer'].enable_truncation(max_length=MAX_LENGTH)
-        ML_ARTIFACTS['tokenizer'].enable_padding(length=MAX_LENGTH)
-        
-        print("Modelo ONNX cargado con éxito en CPU (consumo < 400MB RAM)")
 
     except Exception as e:
         print("ERROR CRÍTICO EN STARTUP: " + str(e))
@@ -169,7 +147,7 @@ async def lifespan(app: FastAPI):
     print("API detenida y recursos liberados.")
 
 # =============================================================================
-# APP
+# APP Y MIDDLEWARE
 # =============================================================================
 
 app = FastAPI(title="SecureMail Phishing Detection API", version="2.0", lifespan=lifespan)
@@ -194,9 +172,9 @@ class EmailInput(BaseModel):
     To: str = Field(..., description="Destinatario del correo")
     Subject: str = Field(..., description="Asunto del correo")
     Body: str = Field(..., max_length=100000, description="Cuerpo del correo en texto plano")
-    Date: str = Field(..., description="Fecha de recepcion")
-    Concatenated_URLs: str = Field("", max_length=10000, description="URLs extraidas del cuerpo")
-    MessageId: str = Field(..., description="ID unico del mensaje")
+    Date: str = Field(..., description="Fecha de recepción")
+    Concatenated_URLs: str = Field("", max_length=10000, description="URLs extraídas del cuerpo")
+    MessageId: str = Field(..., description="ID único del mensaje")
 
     class Config:
         extra = "ignore"
@@ -209,7 +187,7 @@ class EmailInput(BaseModel):
 def health_check():
     return {
         "status": "online",
-        "models_loaded": bool(ML_ARTIFACTS),
+        "models_loaded": bool(ML_ARTIFACTS.get('model')),
     }
 
 @app.post("/predict")
@@ -217,47 +195,24 @@ async def predict(
     email_data: EmailInput,
     token_data: TokenData = Depends(require_scope("predict"))
 ):
-    if not ML_ARTIFACTS:
+    if not ML_ARTIFACTS.get('model'):
         raise HTTPException(status_code=503, detail="Servicio no inicializado correctamente.")
 
     try:
         df_raw = pd.DataFrame([email_data.model_dump()])
         df_engineered = engineer_detailed_features(df_raw)
 
-        try:
-            X_structured = ML_ARTIFACTS['pipeline'].transform(df_engineered)
-            X_structured = X_structured.astype(np.float32)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail="Error al procesar las características del correo.")
+        if ML_ARTIFACTS.get('pipeline'):
+            X_input = ML_ARTIFACTS['pipeline'].transform(df_engineered)
+        else:
+            X_input = df_engineered
 
-        text_parts = [
-            str(df_engineered.iloc[0].get('From', MISSING_VALUE_STR)),
-            str(df_engineered.iloc[0].get('To', MISSING_VALUE_STR)),
-            str(df_engineered.iloc[0].get('Date', MISSING_VALUE_STR)),
-            str(df_engineered.iloc[0].get('Subject', MISSING_VALUE_STR)),
-            str(df_engineered.iloc[0].get('Body', MISSING_VALUE_STR)),
-            str(df_engineered.iloc[0].get('Concatenated_URLs', MISSING_VALUE_STR))
-        ]
-        full_text = (" " + BERT_SEP_TOKEN + " ").join(text_parts)
+        # Inferencia con el modelo de Scikit-Learn / XGBoost
+        if hasattr(ML_ARTIFACTS['model'], "predict_proba"):
+            phishing_prob = float(ML_ARTIFACTS['model'].predict_proba(X_input)[0][1])
+        else:
+            phishing_prob = float(ML_ARTIFACTS['model'].predict(X_input)[0])
 
-        # Tokenización ligera a través de 'tokenizers'
-        encoded = ML_ARTIFACTS['tokenizer'].encode(full_text)
-        
-        input_ids = np.array([encoded.ids], dtype=np.int64)
-        attention_mask = np.array([encoded.attention_mask], dtype=np.int64)
-
-        # Inferencia con ONNX Runtime
-        onnx_inputs = {
-            'input_ids': input_ids,
-            'attention_mask': attention_mask
-        }
-        onnx_outputs = ML_ARTIFACTS['bert_onnx'].run(None, onnx_inputs)
-
-        # Extraer el vector del token [CLS] / primer posición
-        X_bert = onnx_outputs[0][:, 0, :].astype(np.float32)
-        X_final = np.hstack([X_bert, X_structured])
-
-        phishing_prob = float(ML_ARTIFACTS['model'].predict_proba(X_final)[0][1])
         threshold = ML_ARTIFACTS['threshold']
         label = "Phishing" if phishing_prob >= threshold else "Safe"
 
@@ -282,5 +237,5 @@ async def predict(
     except HTTPException:
         raise
     except Exception as e:
-        print("ERROR en /predict | MessageId=" + email_data.MessageId + " | " + type(e).__name__)
-        raise HTTPException(status_code=500, detail="Error interno del servidor.")
+        print("ERROR en /predict | MessageId=" + email_data.MessageId + " | " + type(e).__name__ + ": " + str(e))
+        raise HTTPException(status_code=500, detail="Error interno del servidor al procesar el correo.")
