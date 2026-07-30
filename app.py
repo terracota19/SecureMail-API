@@ -1,356 +1,436 @@
 import os
-import sys
+import gc
 import re
+import glob
 import json
-import joblib
+import email
+from email import policy
+from email.parser import BytesParser
+from urllib.parse import urlparse
+from time import time
+
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
-from typing import Optional, List, Dict, Any
-from contextlib import asynccontextmanager
-
-from dotenv import load_dotenv
-load_dotenv()
-
-from fastapi import FastAPI, HTTPException, Depends
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
-
-# Modos de PyTorch / Transformers
 import torch
+from torch.cuda.amp import autocast
 from transformers import XLMRobertaTokenizer, XLMRobertaModel
 
-# ============================================================
-# IMPORTACIÓN DEL MÓDULO UTIL / CONFIG
-# ============================================================
+from sklearn.preprocessing import StandardScaler, LabelEncoder
+from category_encoders import HashingEncoder
+from sklearn.model_selection import StratifiedKFold, GridSearchCV
+from sklearn.metrics import precision_recall_curve, f1_score, classification_report
+import joblib
+
+# Configuración / Fallbacks
 try:
-    import utils
-    print("✅ Módulo 'utils' cargado correctamente.")
-except ModuleNotFoundError:
-    try:
-        import util as utils
-        print("✅ Módulo 'util' cargado como 'utils'.")
-    except ModuleNotFoundError:
-        utils = None
-        print("⚠️ Advertencia: No se encontró 'utils.py'. Se usará procesamiento fallback local.")
+    from bs4 import BeautifulSoup
+    BS4_AVAILABLE = True
+except ImportError:
+    BS4_AVAILABLE = False
+    print("⚠️ BeautifulSoup4 no encontrado. La limpieza de HTML en EMLs será básica.")
 
 try:
     import config
-    print("✅ Módulo 'config' cargado correctamente.")
-except ModuleNotFoundError:
-    config = None
-    print("⚠️ Advertencia: No se encontró 'config.py'.")
+except ImportError:
+    # Objeto dummy de fallback en caso de no tener config.py separado
+    class ConfigDummy:
+        MISSING_VALUE_STR = "No Data"
+        TARGET_COLUMN = "Phishing"
+        TIME_FEATURE = "Hour"
+        CATEGORICAL_FEATURES = ["From", "To", "Subject"]
+        EXPECTED_PARSED_COLS = ["From", "To", "Subject", "Date", "Body", "Concatenated_URLs", "Phishing"]
+        BERT_MODEL_NAME = "xlm-roberta-base"
+        DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        BATCH_SIZE = 32
+        MAX_LENGTH = 512
+        OPTUNA_AVAILABLE = False
+    config = ConfigDummy()
 
-# Importar autenticación (auth.py)
-from auth import auth_router, require_scope, TokenData
 
-# ============================================================
-# CONSTANTES Y CONFIGURACIÓN DE RUTAS
-# ============================================================
-MODELS_DIR = os.getenv("MODELS_DIR", "/secure.mail/models")
-OBJECTS_DIR = os.getenv("OBJECTS_DIR", "/secure.mail/objects")
+# ==========================================
+# 1. CARGA Y PARSEO DE DATOS (CSV Y EML)
+# ==========================================
 
-MODEL_PATH_SKLEARN = getattr(config, "BEST_MODEL_PATH", os.path.join(MODELS_DIR, "best_phishing_model.joblib"))
-MODEL_PATH_HYBRID = getattr(config, "HYBRID_BEST_MODEL_PATH", os.path.join(MODELS_DIR, "hybrid_best_model.pth"))
-SCALER_PATH = getattr(config, "SCALER_PATH", os.path.join(OBJECTS_DIR, "feature_scaler.joblib"))
-ENCODERS_PATH = getattr(config, "ENCODERS_PATH", os.path.join(OBJECTS_DIR, "label_encoders.joblib"))
-THRESHOLD_MAP_PATH = getattr(config, "THRESHOLD_MAP_PATH", os.path.join(OBJECTS_DIR, "thresholds_map.joblib"))
-BERT_MODEL_NAME = getattr(config, "BERT_MODEL_NAME", "xlm-roberta-base")
+def create_concatenated_urls(url_value):
+    """Limpia y concatena URLs de los datos CSV."""
+    missing_val_str = config.MISSING_VALUE_STR
+    if pd.isna(url_value) or str(url_value).strip().lower() in ['0', '0.0', '', 'nan', 'none']:
+        return missing_val_str
 
-# ============================================================
-# ARQUITECTURA DEL MODELO HÍBRIDO (PYTORCH)
-# ============================================================
-class HybridPhishingModel(torch.nn.Module):
-    def __init__(self, n_metadata_features: int, bert_model_name: str = BERT_MODEL_NAME):
-        super(HybridPhishingModel, self).__init__()
-        self.bert = XLMRobertaModel.from_pretrained(bert_model_name)
-        bert_output_dim = self.bert.config.hidden_size
-        total_input_dim = bert_output_dim + n_metadata_features
-        
-        self.classification_head = torch.nn.Sequential(
-            torch.nn.Linear(total_input_dim, 256), torch.nn.ReLU(), torch.nn.Dropout(0.3),
-            torch.nn.Linear(256, 64), torch.nn.ReLU(), torch.nn.Dropout(0.2),
-            torch.nn.Linear(64, 1)
-        )
-        
-    def forward(self, input_ids, attention_mask, metadata):
-        bert_outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
-        bert_cls_embedding = bert_outputs.pooler_output
-        fused_vector = torch.cat([bert_cls_embedding, metadata], dim=1)
-        logits = self.classification_head(fused_vector)
-        return logits
+    url_str = str(url_value).strip()
+    url_str = re.sub(r'\\n|\\r', ' ', url_str)
+    url_str = re.sub(r'[\[\]\'"]', '', url_str)
+    url_str = re.sub(r'\s+', ' ', url_str).strip()
 
-# ============================================================
-# ESTADO GLOBAL DE LA APLICACIÓN
-# ============================================================
-state: Dict[str, Any] = {
-    "model_type": None,          # 'sklearn' o 'hybrid'
-    "model": None,
-    "tokenizer": None,
-    "bert_base_model": None,     # Para extracción de embeddings de Sklearn si aplica
-    "feature_scaler": None,
-    "label_encoders": None,
-    "decision_threshold": 0.5,
-    "device": torch.device("cuda" if torch.cuda.is_available() else "cpu")
-}
+    if url_str == '1':
+        return missing_val_str
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    print("🚀 Iniciando SecureMail Inference API...")
-    print(f"ℹ️ Dispositivo de procesamiento: {state['device']}")
+    url_str = re.sub(r'(https?://)', r' \1', url_str).strip()
+    result = ' '.join(url_str.split())
+    return result if result else missing_val_str
 
-    # 1. Cargar Scaler y Encoders
-    if os.path.exists(SCALER_PATH):
-        state["feature_scaler"] = joblib.load(SCALER_PATH)
-        print(f"✅ Scaler cargado desde: {SCALER_PATH}")
 
-    if os.path.exists(ENCODERS_PATH):
-        state["label_encoders"] = joblib.load(ENCODERS_PATH)
-        print(f"✅ Encoders cargados desde: {ENCODERS_PATH}")
+def load_and_combine_data(file_paths, expected_cols, target_col, missing_val_str=config.MISSING_VALUE_STR):
+    """Carga y unifica datasets CSV optimizando el uso de memoria."""
+    all_data = []
+    print(f"--- Cargando {len(file_paths)} datasets CSV ---")
 
-    # 2. Cargar Umbral de Decisión
-    if os.path.exists(THRESHOLD_MAP_PATH):
+    for file in tqdm(file_paths, desc="Cargando CSVs"):
         try:
-            t_map = joblib.load(THRESHOLD_MAP_PATH)
-            if isinstance(t_map, dict) and len(t_map) > 0:
-                state["decision_threshold"] = float(list(t_map.values())[0])
-                print(f"✅ Umbral de decisión cargado: {state['decision_threshold']}")
+            try:
+                df = pd.read_csv(file)
+            except UnicodeDecodeError:
+                df = pd.read_csv(file, encoding='latin1')
+            except pd.errors.ParserError:
+                df = pd.read_csv(file, encoding='latin1', on_bad_lines='skip')
+            all_data.append(df)
         except Exception as e:
-            print(f"⚠️ No se pudo cargar el umbral del mapa: {e}")
+            print(f"❌ Error al cargar {file}: {e}")
 
-    # 3. Cargar Tokenizer
-    try:
-        state["tokenizer"] = XLMRobertaTokenizer.from_pretrained(BERT_MODEL_NAME)
-        print(f"✅ Tokenizer ({BERT_MODEL_NAME}) cargado correctamente.")
-    except Exception as e:
-        print(f"⚠️ Error al cargar Tokenizer: {e}")
+    if not all_data:
+        return pd.DataFrame()
 
-    # 4. Cargar Modelo (Prioridad al modelo Híbrido PyTorch, luego Sklearn)
-    if os.path.exists(MODEL_PATH_HYBRID) and state["feature_scaler"] is not None:
+    df_combined = pd.concat(all_data, ignore_index=True)
+    del all_data
+    gc.collect()
+
+    df_combined.columns = df_combined.columns.str.lower().str.replace('sender', 'from').str.replace('receiver', 'to').str.replace('label', 'phish')
+    column_mapping = {'subject': 'Subject', 'body': 'Body', 'date': 'Date', 'from': 'From', 'to': 'To', 'phish': target_col, 'urls': 'Original_URLs'}
+    df_combined.rename(columns=lambda c: column_mapping.get(c, c), inplace=True)
+
+    for col in expected_cols:
+        if col not in df_combined.columns:
+            if col == 'urls' and 'Original_URLs' in df_combined.columns:
+                continue
+            df_combined[col] = 0 if col == target_col else missing_val_str
+
+        if df_combined[col].dtype == object or col != target_col:
+            df_combined[col] = df_combined[col].fillna(missing_val_str).astype(str)
+        elif col == target_col:
+            df_combined[col] = pd.to_numeric(df_combined[col], errors='coerce').fillna(0).astype(np.int8)
+
+    if 'Original_URLs' in df_combined.columns:
+        df_combined['Concatenated_URLs'] = df_combined['Original_URLs'].apply(create_concatenated_urls)
+        df_combined.drop(columns=['Original_URLs'], inplace=True, errors='ignore')
+    elif 'Concatenated_URLs' not in df_combined.columns:
+        df_combined['Concatenated_URLs'] = missing_val_str
+
+    final_cols_order = [c for c in config.EXPECTED_PARSED_COLS if c in df_combined.columns]
+    df_combined = df_combined[final_cols_order].dropna(subset=[target_col])
+    
+    return df_combined
+
+
+def decode_payload(part):
+    """Decodifica partes de email manejando encodings."""
+    payload = part.get_payload(decode=True)
+    if not payload:
+        return ""
+
+    charset = part.get_content_charset()
+    fallback_encodings = ['utf-8', 'latin-1', 'iso-8859-1', 'cp1252', 'ascii']
+
+    if charset:
         try:
-            n_meta = len(state["feature_scaler"].feature_names_in_)
-            hybrid_net = HybridPhishingModel(n_metadata_features=n_meta)
-            hybrid_net.load_state_dict(torch.load(MODEL_PATH_HYBRID, map_location=state["device"]))
-            hybrid_net.to(state["device"])
-            hybrid_net.eval()
-            
-            state["model"] = hybrid_net
-            state["model_type"] = "hybrid"
-            print(f"✅ Modelo Híbrido PyTorch cargado con éxito desde: {MODEL_PATH_HYBRID}")
-        except Exception as e:
-            print(f"⚠️ Error cargando modelo híbrido PyTorch: {e}")
+            return payload.decode(charset, errors='replace')
+        except (LookupError, UnicodeDecodeError):
+            pass
 
-    if state["model"] is None and os.path.exists(MODEL_PATH_SKLEARN):
+    for encoding in fallback_encodings:
         try:
-            state["model"] = joblib.load(MODEL_PATH_SKLEARN)
-            state["model_type"] = "sklearn"
-            print(f"✅ Modelo Sklearn / Calibrado cargado con éxito desde: {MODEL_PATH_SKLEARN}")
+            return payload.decode(encoding, errors='replace')
+        except UnicodeDecodeError:
+            continue
 
-            # Cargar BERT base para embeddings si el modelo es de Sklearn
-            if utils is not None and hasattr(utils, "get_bert_model_and_tokenizer"):
-                _, state["bert_base_model"] = utils.get_bert_model_and_tokenizer()
-            else:
-                state["bert_base_model"] = XLMRobertaModel.from_pretrained(BERT_MODEL_NAME).to(state["device"])
-                state["bert_base_model"].eval()
-        except Exception as e:
-            print(f"❌ Error cargando modelo Sklearn: {e}")
+    return payload.decode('ascii', errors='replace')
 
-    yield
-    print("🛑 Servidor detenido. Recursos liberados.")
 
-# ============================================================
-# CONFIGURACIÓN DE FASTAPI Y CORS
-# ============================================================
-app = FastAPI(
-    title="SecureMail Phishing Detection API",
-    version="2.0.0",
-    lifespan=lifespan
-)
+def extract_body_from_eml(msg):
+    """Extrae el texto del cuerpo de un email."""
+    body_plain, body_html = None, None
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-app.include_router(auth_router)
-
-class EmailInput(BaseModel):
-    From: str = Field(default="No Data")
-    To: str = Field(default="No Data")
-    Subject: str = Field(default="No Data")
-    Body: str = Field(default="No Data")
-    Date: str = Field(default="No Data")
-    Concatenated_URLs: str = Field(default="No Data")
-    MessageId: str = Field(default="No Data")
-
-# ============================================================
-# FUNCIONES AUXILIARES DE TRANSFORMACIÓN DE ENTRADA
-# ============================================================
-def extract_metadata_features(df_raw: pd.DataFrame) -> np.ndarray:
-    """Preprocesa y escala metadatos igual que PhishingDataset o fit_preprocess_additional_features"""
-    if utils is not None and hasattr(utils, "transform_preprocess_additional_features"):
-        return utils.transform_preprocess_additional_features(
-            df_raw, 
-            state["label_encoders"], 
-            state["feature_scaler"]
-        )
-
-    # Fallback local en caso de que utils falle o no exista
-    df = df_raw.copy()
-    scaler = state["feature_scaler"]
-    encoders = state["label_encoders"]
-
-    if "feature_hasher" in encoders:
-        hasher = encoders["feature_hasher"]
-        cat_cols = ["From", "To", "Subject", "Concatenated_URLs", "MessageId"]
-        cols_to_hash = [c for c in cat_cols if c in df.columns]
-        df_hashed = hasher.transform(df[cols_to_hash].astype(str).fillna("No Data"))
+    if msg.is_multipart():
+        for part in msg.walk():
+            content_type = part.get_content_type()
+            content_disposition = str(part.get('Content-Disposition'))
+            if 'attachment' in content_disposition or not content_type.startswith('text/'):
+                continue
+            if content_type == 'text/plain' and body_plain is None:
+                body_plain = decode_payload(part)
+            elif content_type == 'text/html' and body_html is None:
+                body_html = decode_payload(part)
     else:
-        df_hashed = pd.DataFrame(index=df.index)
+        content_type = msg.get_content_type()
+        if content_type == 'text/plain':
+            body_plain = decode_payload(msg)
+        elif content_type == 'text/html':
+            body_html = decode_payload(msg)
 
-    # Tiempo por defecto
-    df["time_feature"] = 0.0
+    if body_plain:
+        return re.sub(r'\s+', ' ', body_plain).strip() or config.MISSING_VALUE_STR
+    elif body_html:
+        if BS4_AVAILABLE:
+            try:
+                soup = BeautifulSoup(body_html, 'html.parser')
+                return re.sub(r'\s+', ' ', soup.get_text(separator=' ', strip=True)).strip() or config.MISSING_VALUE_STR
+            except Exception:
+                pass
+        return re.sub(r'\s+', ' ', body_html).strip() or config.MISSING_VALUE_STR
 
-    features_to_scale = pd.concat([
-        df_hashed.reset_index(drop=True),
-        df[["time_feature"]].reset_index(drop=True)
-    ], axis=1)
+    return config.MISSING_VALUE_STR
 
-    if hasattr(scaler, "feature_names_in_"):
-        features_to_scale = features_to_scale[list(scaler.feature_names_in_)]
 
-    return scaler.transform(features_to_scale)
-
-def prepare_concatenated_text(email_data: EmailInput) -> str:
-    """Concatena los campos de texto usando el token separador de BERT"""
-    sep = getattr(config, "BERT_SEP_TOKEN", "</s>")
-    subj = str(email_data.Subject) if email_data.Subject != "No Data" else ""
-    body = str(email_data.Body) if email_data.Body != "No Data" else ""
-    urls = str(email_data.Concatenated_URLs) if email_data.Concatenated_URLs != "No Data" else ""
-    return f"{subj} {sep} {body} {sep} {urls}"
-
-def get_bert_embeddings(text: str) -> np.ndarray:
-    """Genera embeddings del token [CLS] / </s> para modelos Sklearn"""
-    tokenizer = state["tokenizer"]
-    bert_model = state["bert_base_model"]
-    device = state["device"]
-
-    inputs = tokenizer(
-        text,
-        return_tensors="pt",
-        padding=True,
-        truncation=True,
-        max_length=getattr(config, "MAX_LENGTH", 128)
-    ).to(device)
-
-    with torch.no_grad():
-        outputs = bert_model(**inputs)
-        # Extraer representación pooled o [CLS]
-        if hasattr(outputs, "pooler_output") and outputs.pooler_output is not None:
-            cls_embedding = outputs.pooler_output
-        else:
-            cls_embedding = outputs.last_hidden_state[:, 0, :]
-
-    return cls_embedding.cpu().numpy()
-
-# ============================================================
-# ENDPOINTS
-# ============================================================
-@app.api_route("/", methods=["GET", "HEAD"])
-async def root():
-    return {
-        "status": "active",
-        "model_type": state["model_type"],
-        "threshold": state["decision_threshold"]
-    }
-
-@app.post("/predict")
-async def predict(
-    email_data: EmailInput,
-    token_data: TokenData = Depends(require_scope("predict"))
-):
-    if state["model"] is None:
-        raise HTTPException(
-            status_code=503,
-            detail="Servidor no listo: Ningún modelo de Machine Learning está cargado."
-        )
-
+def parse_eml_file(file_path):
+    """Parsea un archivo .eml individual."""
     try:
-        # Dataframe base para metadatos
-        raw_dict = {
-            "From": email_data.From,
-            "To": email_data.To,
-            "Subject": email_data.Subject,
-            "Body": email_data.Body,
-            "Date": email_data.Date,
-            "Concatenated_URLs": email_data.Concatenated_URLs,
-            "MessageId": email_data.MessageId
-        }
-        df_raw = pd.DataFrame([raw_dict])
-
-        # 1. Obtención de Metadatos Procesados
-        metadata_scaled = extract_metadata_features(df_raw)
-
-        # 2. Inferencia según el tipo de modelo
-        phishing_prob = 0.5
-
-        if state["model_type"] == "hybrid":
-            # Modelo PyTorch HybridPhishingModel
-            text_str = prepare_concatenated_text(email_data)
-            max_len = getattr(config, "MAX_LENGTH", 128)
-            
-            encoding = state["tokenizer"].encode_plus(
-                text_str,
-                max_length=max_len,
-                padding='max_length',
-                truncation=True,
-                return_tensors='pt'
-            )
-
-            input_ids = encoding['input_ids'].to(state["device"])
-            attention_mask = encoding['attention_mask'].to(state["device"])
-            meta_tensor = torch.tensor(metadata_scaled, dtype=torch.float).to(state["device"])
-
-            with torch.no_grad():
-                logits = state["model"](input_ids, attention_mask, meta_tensor)
-                phishing_prob = float(torch.sigmoid(logits).cpu().numpy()[0][0])
-
-        elif state["model_type"] == "sklearn":
-            # Modelo de Sklearn (embeddings concantedos con metadatos)
-            text_str = prepare_concatenated_text(email_data)
-            text_embeddings = get_bert_embeddings(text_str)
-
-            # Recreación de X_combined = [X_bert, X_metadata]
-            X_combined = np.hstack([text_embeddings, metadata_scaled])
-
-            if hasattr(state["model"], "predict_proba"):
-                probs = state["model"].predict_proba(X_combined)[0]
-                phishing_prob = float(probs[1]) if len(probs) > 1 else float(probs[0])
-            else:
-                pred = state["model"].predict(X_combined)[0]
-                phishing_prob = 1.0 if pred == 1 else 0.0
-
-        # Evaluar resultado según umbral ajustado
-        threshold = state["decision_threshold"]
-        label = "Phishing" if phishing_prob >= threshold else "Legitimate"
+        with open(file_path, 'rb') as f:
+            msg = BytesParser(policy=policy.default).parse(f)
 
         return {
-            "status": "OK",
-            "predictions": [{
-                "message_id": email_data.MessageId,
-                "model_prediction": {
-                    "label": label,
-                    "probability": round(phishing_prob, 4)
-                }
-            }]
+            'From': re.sub(r'\s+', ' ', str(msg.get('From', config.MISSING_VALUE_STR))).strip(),
+            'To': re.sub(r'\s+', ' ', str(msg.get('To', config.MISSING_VALUE_STR))).strip(),
+            'Subject': re.sub(r'\s+', ' ', str(msg.get('Subject', config.MISSING_VALUE_STR))).strip(),
+            'Date': re.sub(r'\s+', ' ', str(msg.get('Date', config.MISSING_VALUE_STR))).strip(),
+            'Body': extract_body_from_eml(msg)
         }
-
     except Exception as e:
-        print(f"❌ ERROR en /predict: {str(e)}")
-        raise HTTPException(
-            status_code=400,
-            detail=f"Error al procesar la predicción: {str(e)}"
-        )
+        print(f"❌ Error parseando {os.path.basename(file_path)}: {e}")
+        return None
+
+
+def extract_urls_from_body_text(body_text):
+    """Extrae URLs válidas con Regex."""
+    if not isinstance(body_text, str) or not body_text:
+        return config.MISSING_VALUE_STR
+
+    url_pattern = re.compile(
+        r'(?:(?:https?|ftp):\/\/|www\.)'
+        r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|'
+        r'localhost|\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'
+        r'(?::\d+)?(?:[/?]\S*)?', re.IGNORECASE
+    )
+
+    urls = url_pattern.findall(body_text)
+    valid_urls = []
+    for url in urls:
+        if url.lower().startswith('www.'):
+            url = 'http://' + url
+        try:
+            parsed = urlparse(url)
+            if parsed.scheme in ['http', 'https', 'ftp'] and ('.' in parsed.netloc or parsed.netloc == 'localhost'):
+                valid_urls.append(re.sub(r'[.,)\]}>\'"?]+$', '', url.strip()))
+        except ValueError:
+            continue
+
+    return ' '.join(valid_urls) if valid_urls else config.MISSING_VALUE_STR
+
+
+def process_eml_directory(dir_path, target_value=1):
+    """Procesa una carpeta completa de archivos .eml."""
+    eml_files = glob.glob(os.path.join(dir_path, '**', '*.eml'), recursive=True)
+    if not eml_files:
+        return pd.DataFrame(columns=config.EXPECTED_PARSED_COLS)
+
+    all_email_data = []
+    for file_path in tqdm(eml_files, desc="Parseando EMLs"):
+        parsed_data = parse_eml_file(file_path)
+        if parsed_data:
+            parsed_data[config.TARGET_COLUMN] = target_value
+            all_email_data.append(parsed_data)
+
+    if not all_email_data:
+        return pd.DataFrame(columns=config.EXPECTED_PARSED_COLS)
+
+    df = pd.DataFrame(all_email_data)
+    del all_email_data
+    gc.collect()
+
+    df['Concatenated_URLs'] = df['Body'].astype(str).apply(extract_urls_from_body_text)
+
+    for col in config.EXPECTED_PARSED_COLS:
+        if col not in df.columns:
+            df[col] = 0 if col == config.TARGET_COLUMN else config.MISSING_VALUE_STR
+        elif col == config.TARGET_COLUMN:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(np.int8)
+        else:
+            df[col] = df[col].fillna(config.MISSING_VALUE_STR).astype(str)
+
+    return df[config.EXPECTED_PARSED_COLS]
+
+
+# ==========================================
+# 2. FEATURE ENGINEERING Y PREPROCESAMIENTO
+# ==========================================
+
+def extract_time_feature(df):
+    """Extrae la hora como float de la columna Date."""
+    df_copy = df.copy()
+    if 'Date' in df_copy.columns:
+        date_dt = pd.to_datetime(df_copy['Date'], errors='coerce', utc=True)
+        df_copy[config.TIME_FEATURE] = date_dt.dt.hour.astype(np.float32).fillna(0.0)
+    else:
+        df_copy[config.TIME_FEATURE] = 0.0
+    return df_copy
+
+
+def fit_preprocess_additional_features(df_train):
+    """Ajusta codificadores y escaladores sin duplicar RAM."""
+    df_processed = extract_time_feature(df_train)
+    label_encoders = {}
+    fitted_data_list = []
+    feature_names_for_scaler = []
+
+    N_HASH_COMPONENTS = 100
+    cols_to_hash = [col for col in config.CATEGORICAL_FEATURES if col in df_processed.columns]
+
+    hasher = HashingEncoder(cols=cols_to_hash, n_components=N_HASH_COMPONENTS, return_df=True)
+    df_processed_cat = df_processed[cols_to_hash].astype(str).fillna(config.MISSING_VALUE_STR)
+    
+    fitted_data_hashed = hasher.fit_transform(df_processed_cat)
+    del df_processed_cat
+    gc.collect()
+
+    label_encoders['feature_hasher'] = hasher
+
+    if not fitted_data_hashed.empty:
+        fitted_data_list.append(fitted_data_hashed.values.astype(np.float32))
+        feature_names_for_scaler.extend(list(fitted_data_hashed.columns))
+        del fitted_data_hashed
+
+    if config.TIME_FEATURE in df_processed.columns:
+        time_vals = df_processed[[config.TIME_FEATURE]].fillna(0).values.astype(np.float32)
+        fitted_data_list.append(time_vals)
+        feature_names_for_scaler.append(config.TIME_FEATURE)
+
+    target_encoder = LabelEncoder()
+    target_encoder.fit(df_train[config.TARGET_COLUMN].values)
+    label_encoders['target_encoder'] = target_encoder
+
+    features_to_scale = np.hstack(fitted_data_list)
+    del fitted_data_list
+    gc.collect()
+
+    scaler = StandardScaler()
+    scaled_data = scaler.fit_transform(features_to_scale).astype(np.float32)
+    scaler.feature_names_in_ = np.array(feature_names_for_scaler, dtype=object)
+
+    return scaled_data, label_encoders, scaler
+
+
+def transform_preprocess_additional_features(df, label_encoders, scaler):
+    """Aplica trasformaciones preajustadas a nuevos datos."""
+    df_processed = extract_time_feature(df)
+    hasher = label_encoders['feature_hasher']
+    cols_to_hash = [col for col in config.CATEGORICAL_FEATURES if col in df_processed.columns]
+    num_hash_cols_expected = len([f for f in scaler.feature_names_in_ if str(f).startswith('col_')])
+
+    if not cols_to_hash:
+        transformed_data_hashed_values = np.zeros((len(df_processed), num_hash_cols_expected), dtype=np.float32)
+    else:
+        df_processed_cat = df_processed[cols_to_hash].astype(str).fillna(config.MISSING_VALUE_STR)
+        transformed_data_hashed = hasher.transform(df_processed_cat)
+        transformed_data_hashed_values = transformed_data_hashed.values.astype(np.float32)
+        del df_processed_cat, transformed_data_hashed
+        gc.collect()
+
+        if transformed_data_hashed_values.shape[1] < num_hash_cols_expected:
+            pad = num_hash_cols_expected - transformed_data_hashed_values.shape[1]
+            transformed_data_hashed_values = np.pad(transformed_data_hashed_values, ((0, 0), (0, pad)))
+        else:
+            transformed_data_hashed_values = transformed_data_hashed_values[:, :num_hash_cols_expected]
+
+    features_list = [transformed_data_hashed_values]
+
+    if config.TIME_FEATURE in scaler.feature_names_in_:
+        if config.TIME_FEATURE in df_processed.columns:
+            time_vals = df_processed[[config.TIME_FEATURE]].fillna(0).values.astype(np.float32)
+        else:
+            time_vals = np.zeros((len(df_processed), 1), dtype=np.float32)
+        features_list.append(time_vals)
+
+    features_to_scale = np.hstack(features_list)
+    return scaler.transform(features_to_scale).astype(np.float32)
+
+
+def set_dynamic_model_weights(y_train, models_tune, models_no_tune):
+    """Calcula el balance de clases dinámico (scale_pos_weight)."""
+    counts = np.bincount(y_train)
+    xgb_scale_weight = float(counts[0] / counts[1]) if len(counts) > 1 and counts[1] > 0 else 1.0
+
+    for model_dict in [models_tune, models_no_tune]:
+        if 'XGBoost' in model_dict:
+            try:
+                model_dict['XGBoost'].set_params(scale_pos_weight=xgb_scale_weight)
+            except Exception as e:
+                print(f"⚠️ No se pudo asignar weight a XGBoost: {e}")
+
+
+# ==========================================
+# 3. EMBEDDINGS ROBUSTOS CON TRANSFORMERS
+# ==========================================
+
+def get_bert_model_and_tokenizer():
+    """Carga tokenizer y modelo XLM-RoBERTa."""
+    tokenizer = XLMRobertaTokenizer.from_pretrained(config.BERT_MODEL_NAME)
+    model = XLMRobertaModel.from_pretrained(config.BERT_MODEL_NAME)
+    model.to(config.DEVICE)
+    model.eval()
+    return tokenizer, model
+
+
+def generate_bert_embeddings(texts, tokenizer, model):
+    """
+    Genera embeddings XLM-RoBERTa con optimización de memoria VRAM/RAM 
+    usando torch.no_grad() y liberando los tensores intermedios.
+    """
+    if not texts:
+        return np.empty((0, 768), dtype=np.float32)
+
+    embeddings = []
+    use_cuda = config.DEVICE.type == 'cuda'
+    dtype = torch.float16 if use_cuda else torch.float32
+
+    # torch.no_grad deshabilita el cálculo del grafo de autograd liberando RAM masivamente
+    with torch.no_grad():
+        with autocast(enabled=use_cuda, dtype=dtype):
+            for i in tqdm(range(0, len(texts), config.BATCH_SIZE), desc="Generando Embeddings"):
+                batch_texts = [str(t) for t in texts[i:i + config.BATCH_SIZE]]
+                
+                encoded = tokenizer.batch_encode_plus(
+                    batch_texts,
+                    padding=True,
+                    truncation=True,
+                    max_length=config.MAX_LENGTH,
+                    return_tensors='pt'
+                ).to(config.DEVICE)
+
+                outputs = model(**encoded)
+                
+                # Mean Pooling sobre tokens válidos
+                mask = encoded['attention_mask'].unsqueeze(-1).expand(outputs.last_hidden_state.size()).float()
+                sum_emb = torch.sum(outputs.last_hidden_state * mask, 1)
+                sum_mask = torch.clamp(mask.sum(1), min=1e-9)
+                mean_pooled = (sum_emb / sum_mask).cpu().numpy().astype(np.float32)
+
+                embeddings.append(mean_pooled)
+
+                # Limpiar tensores temporales del ciclo
+                del encoded, outputs, mask, sum_emb, sum_mask
+                if use_cuda:
+                    torch.cuda.empty_cache()
+
+    final_embeddings = np.vstack(embeddings)
+    del embeddings
+    gc.collect()
+    
+    return final_embeddings
+
+
+# ==========================================
+# 4. EJECUCIÓN O STREAMLIT ENTRYPOINT
+# ==========================================
+
+if __name__ == "__main__":
+    print("🚀 Módulo app.py inicializado correctamente con optimización de memoria.")
