@@ -236,18 +236,32 @@ async def predict(
     email_data: EmailInput,
     token_data: TokenData = Depends(require_scope("predict"))
 ):
-    if not ML_ARTIFACTS or 'bert' not in ML_ARTIFACTS or 'model' not in ML_ARTIFACTS:
-        raise HTTPException(status_code=503, detail="Servicios de ML no inicializados correctamente.")
-
     try:
+        # Verificamos si BERT se está cargando o necesita inicializarse
+        if 'bert' not in ML_ARTIFACTS:
+            print("Inicializando BERT bajo demanda (primera petición)...")
+            import gc
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
+            # Puedes retornar un aviso previo o proceder a la carga
+            # Opcionalmente, si prefieres avisar al cliente antes de bloquear la respuesta:
+            # return {"status": "INITIALIZING", "message": "El modelo se está preparando para la primera consulta. Inténtalo de nuevo en unos segundos."}
+            
+            ML_ARTIFACTS['tokenizer'] = XLMRobertaTokenizer.from_pretrained(BERT_MODEL_NAME)
+            ML_ARTIFACTS['bert'] = XLMRobertaModel.from_pretrained(
+                BERT_MODEL_NAME, 
+                torch_dtype=torch.float16,
+                low_cpu_mem_usage=True
+            ).to(DEVICE).eval()
+            print("BERT inicializado correctamente en caliente.")
+
         df_raw = pd.DataFrame([email_data.model_dump()])
         df_engineered = engineer_detailed_features(df_raw)
 
-        try:
-            X_structured = ML_ARTIFACTS['pipeline'].transform(df_engineered)
-            X_structured = X_structured.astype(np.float32)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail="Error al procesar las caracteristicas del correo.")
+        X_structured = ML_ARTIFACTS['pipeline'].transform(df_engineered)
+        X_structured = X_structured.astype(np.float32)
 
         text_parts = [
             str(df_engineered.iloc[0].get('From', MISSING_VALUE_STR)),
@@ -277,7 +291,6 @@ async def predict(
         threshold = ML_ARTIFACTS['threshold']
         label = "Phishing" if phishing_prob >= threshold else "Safe"
 
-        # Extracción segura del ID de cliente
         client_id_val = "system"
         if hasattr(token_data, 'client_id'):
             client_id_val = token_data.client_id
