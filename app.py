@@ -125,9 +125,8 @@ def engineer_detailed_features(df_input):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("Iniciando SecureMail API...")
+    print("Iniciando SecureMail API y cargando todos los modelos...")
     try:
-        # Solo cargamos lo ligero para abrir el puerto rápido
         if os.path.exists(MODEL_PATH):
             ML_ARTIFACTS['model'] = joblib.load(MODEL_PATH)
             print("Modelo cargado desde " + MODEL_PATH)
@@ -144,7 +143,15 @@ async def lifespan(app: FastAPI):
         else:
             ML_ARTIFACTS['threshold'] = 0.5
 
-        print("¡Servicios básicos listos! El puerto se abrirá de inmediato.")
+        print("Cargando BERT al inicio...")
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        ML_ARTIFACTS['tokenizer'] = XLMRobertaTokenizer.from_pretrained(BERT_MODEL_NAME)
+        ML_ARTIFACTS['bert'] = XLMRobertaModel.from_pretrained(BERT_MODEL_NAME).to(DEVICE).eval()
+        print("BERT cargado con éxito en " + str(DEVICE))
 
     except Exception as e:
         print("ERROR CRITICO EN STARTUP: " + str(e))
@@ -156,7 +163,7 @@ async def lifespan(app: FastAPI):
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     print("API detenida y recursos liberados.")
-
+    
 # =============================================================================
 # APP
 # =============================================================================
@@ -211,22 +218,10 @@ async def predict(
     email_data: EmailInput,
     token_data: TokenData = Depends(require_scope("predict"))
 ):
-    if 'model' not in ML_ARTIFACTS or 'pipeline' not in ML_ARTIFACTS:
-        raise HTTPException(status_code=503, detail="Servicios de ML no inicializados.")
+    if not ML_ARTIFACTS or 'bert' not in ML_ARTIFACTS:
+        raise HTTPException(status_code=503, detail="Servicios de ML no inicializados correctamente.")
 
     try:
-        # Cargar BERT bajo demanda la primera vez para evitar Out of Memory en el arranque
-        if 'bert' not in ML_ARTIFACTS:
-            print("Cargando BERT bajo demanda...")
-            import gc
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            
-            ML_ARTIFACTS['tokenizer'] = XLMRobertaTokenizer.from_pretrained(BERT_MODEL_NAME)
-            ML_ARTIFACTS['bert'] = XLMRobertaModel.from_pretrained(BERT_MODEL_NAME).to(DEVICE).eval()
-            print("BERT cargado con éxito en " + str(DEVICE))
-
         df_raw = pd.DataFrame([email_data.model_dump()])
         df_engineered = engineer_detailed_features(df_raw)
 
@@ -264,7 +259,6 @@ async def predict(
         threshold = ML_ARTIFACTS['threshold']
         label = "Phishing" if phishing_prob >= threshold else "Safe"
 
-        # Extracción segura del ID para evitar cualquier KeyError o AttributeError
         client_id_val = "system"
         if hasattr(token_data, 'client_id'):
             client_id_val = token_data.client_id
