@@ -13,7 +13,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 USER root
-COPY app.py auth.py ./
+COPY app.py auth.py utils.py ./
 COPY models/ ./models/
 COPY objects/ ./objects/
 COPY Metrics/ ./Metrics/
