@@ -1,8 +1,8 @@
-from transformers import XLMRobertaTokenizer, XLMRobertaModel
+from transformers import XLMRobertaTokenizerFast, XLMRobertaModel
 import os
 
 model_name = "xlm-roberta-base"
-print("Descargando modelo y tokenizer para empaquetarlos en Docker...")
-XLMRobertaTokenizer.from_pretrained(model_name)
+print("Downloading model and tokenizer for Docker packaging...")
+XLMRobertaTokenizerFast.from_pretrained(model_name)
 XLMRobertaModel.from_pretrained(model_name)
-print("¡Modelos descargados con éxito en la caché local!")
+print("Models downloaded successfully to the local cache!")

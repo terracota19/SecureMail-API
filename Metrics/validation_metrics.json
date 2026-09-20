@@ -1,30 +1,24 @@
 {
-    "best_policy_name": "Sweet_Spot_95_95",
-    "final_threshold": 0.7002617955207825,
+    "best_policy_name": "R_min_98_P_min_90",
+    "final_threshold": 0.85,
     "metrics_at_final_threshold": {
-        "threshold": 0.7002617955207825,
-        "Precision": 0.9945279352868869,
-        "Recall": 0.9859658778205834,
-        "F1-Score": 0.9902283988392523
+        "threshold": 0.85,
+        "Precision": 0.9926734092538027,
+        "Recall": 0.9800298765626229,
+        "F1-Score": 0.9863111251780345
     },
     "all_policy_metrics": {
-        "Sweet_Spot_95_95": {
-            "threshold": 0.7002617955207825,
-            "Precision": 0.9945279352868869,
-            "Recall": 0.9859658778205834,
-            "F1-Score": 0.9902283988392523
+        "Default_0_5": {
+            "threshold": 0.5,
+            "Precision": NaN,
+            "Recall": NaN,
+            "F1-Score": NaN
         },
-        "Solid_Balance_90_90": {
-            "threshold": 0.7002617955207825,
-            "Precision": 0.9945279352868869,
-            "Recall": 0.9859658778205834,
-            "F1-Score": 0.9902283988392523
-        },
-        "Fallback_Balance_85_85": {
-            "threshold": 0.7002617955207825,
-            "Precision": 0.9945279352868869,
-            "Recall": 0.9859658778205834,
-            "F1-Score": 0.9902283988392523
+        "R_min_98_P_min_90": {
+            "threshold": 0.85,
+            "Precision": 0.9926734092538027,
+            "Recall": 0.9800298765626229,
+            "F1-Score": 0.9863111251780345
         }
     }
 }
