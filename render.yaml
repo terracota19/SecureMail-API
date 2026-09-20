@@ -3,5 +3,23 @@ services:
     name: phishing-email-detector
     env: docker
     plan: free
-    dockerfilePath: Dockerfile
+    dockerfilePath: ./Dockerfile
     branch: main
+    healthCheckPath: /health/ready
+    envVars:
+      - key: JWT_SECRET_KEY
+        sync: false
+      - key: AUTHORIZED_CLIENTS
+        sync: false
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: JWT_EXPIRE_MINUTES
+        value: "1440"
+      - key: RATE_LIMIT_REQUESTS
+        value: "10"
+      - key: RATE_LIMIT_WINDOW_S
+        value: "60"
+      - key: TORCH_NUM_THREADS
+        value: "1"
+      - key: LIMIT_CONCURRENCY
+        value: "1"

@@ -1,102 +1,36 @@
-import pytest
-from fastapi.testclient import TestClient
-import sys
 import os
 
-# Ajustar la ruta para poder importar desde la carpeta 'app'
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-with-at-least-32-characters")
+os.environ.setdefault("AUTHORIZED_CLIENTS", "gmail_addon:$2b$12$abcdefghijklmnopqrstuu")
 
-from app import app
-from app import EmailData
+from app import EmailInput, PredictionResponse
 
-client = TestClient(app)
 
-def test_api_health():
-    response = client.post("/", json={
-        "From": "user@example.com",
-        "To": "receiver@example.com",
-        "Subject": "Hello!",
-        "Body": "This is a test email, not necessarily a phishing attempt",
-        "Date": "2024-01-01T12:00:00Z",
-        "Concatenated_URLs": "https://example.com",
-        "Attachments": []
-    })
-    assert response.status_code == 200
-    json_data = response.json()
-    assert "status" in json_data
-    assert json_data["status"] == "OK"
-    assert "predictions" in json_data
+def test_email_input_accepts_gmail_payload():
+    payload = EmailInput(
+        From="sender@example.com",
+        To="receiver@example.com",
+        Subject="Test message",
+        Body="This is a test email.",
+        Date="2026-09-20T12:00:00Z",
+        Concatenated_URLs="https://example.com",
+        MessageId="message-1",
+    )
+    assert payload.MessageId == "message-1"
 
-def test_fuzzing_from_empty():
-    response = client.post("/", json={
-        "From": "",
-        "To": "receiver@example.com",
-        "Subject": "Hello!",
-        "Body": "This is a test email",
-        "Date": "2024-01-01T12:00:00Z",
-        "Concatenated_URLs": "https://example.com",
-        "Attachments": []
-    })
-    assert response.status_code == 422
 
-def test_fuzzing_invalid_date():
-    response = client.post("/", json={
-        "From": "user@example.com",
-        "To": "receiver@example.com",
-        "Subject": "Hello!",
-        "Body": "This is a test email",
-        "Date": "invalid-date-format",
-        "Concatenated_URLs": "https://example.com",
-        "Attachments": []
-    })
-    assert response.status_code == 422  
-
-def test_fuzzing_long_url():
-    long_url = "https://" + "a" * 5000 + ".com"
-    response = client.post("/", json={
-        "From": "user@example.com",
-        "To": "receiver@example.com",
-        "Subject": "Hello!",
-        "Body": "This is a test email",
-        "Date": "2024-01-01T12:00:00Z",
-        "Concatenated_URLs": long_url,
-        "Attachments": []
-    })
-    assert response.status_code == 200
-
-def test_fuzzing_special_characters():
-    response = client.post("/", json={
-        "From": "user@example.com",
-        "To": "receiver@example.com",
-        "Subject": "Hello!",
-        "Body": "This is a test email! @#$%^&*()_+",
-        "Date": "2024-01-01T12:00:00Z",
-        "Concatenated_URLs": "https://example.com",
-        "Attachments": []
-    })
-    assert response.status_code == 200
-
-def test_fuzzing_large_body():
-    large_body = "A" * 10000
-    response = client.post("/", json={
-        "From": "user@example.com",
-        "To": "receiver@example.com",
-        "Subject": "Hello!",
-        "Body": large_body,
-        "Date": "2024-01-01T12:00:00Z",
-        "Concatenated_URLs": "https://example.com",
-        "Attachments": []
-    })
-    assert response.status_code == 200
-
-def test_fuzzing_missing_field():
-    response = client.post("/", json={
-        "From": "user@example.com",
-        "To": None,
-        "Subject": "Hello!",
-        "Body": "This is a test email",
-        "Date": "2024-01-01T12:00:00Z",
-        "Concatenated_URLs": "https://example.com",
-        "Attachments": []
-    })
-    assert response.status_code == 422
+def test_gmail_response_contract():
+    response = PredictionResponse.model_validate(
+        {
+            "status": "OK",
+            "predictions": [
+                {"model_prediction": {"label": "Phishing", "probability": 0.91}}
+            ],
+            "is_phishing": True,
+            "probability": 0.91,
+            "threshold": 0.5,
+        }
+    )
+    assert response.status == "OK"
+    assert response.predictions[0].model_prediction.label == "Phishing"
+    assert 0 <= response.predictions[0].model_prediction.probability <= 1

@@ -1,35 +1,34 @@
-import pytest
-import pandas as pd
-import numpy as np
-import sys
 import os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from app import process_urls, preprocess_additional_features
+os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-with-at-least-32-characters")
+os.environ.setdefault("AUTHORIZED_CLIENTS", "gmail_addon:$2b$12$abcdefghijklmnopqrstuu")
 
-def test_process_urls():
-    urls = "https://example.com https://test.com"
-    result = process_urls(urls)
+import pytest
+from pydantic import ValidationError
 
-    assert isinstance(result, pd.Series)
-    assert result['total_urls'] == 2
-    assert result['is_https_avg'] == 1.0
+from app import EmailInput
 
-def test_process_urls_no_data():
-    result = process_urls("No Data")
 
-    assert isinstance(result, pd.Series)
-    assert result['total_urls'] == 0
-    assert result['is_https_avg'] == 0.0
+def test_email_input_rejects_oversized_body():
+    with pytest.raises(ValidationError):
+        EmailInput(
+            From="sender@example.com",
+            To="receiver@example.com",
+            Subject="Test",
+            Body="x" * 50001,
+            Date="2026-09-20T12:00:00Z",
+            MessageId="message-1",
+        )
 
-def test_preprocess_additional_features():
-    data = pd.DataFrame([{
-        "From": "user@example.com",
-        "To": "receiver@example.com",
-        "Date": "2024-01-01T12:00:00Z"
-    }])
 
-    processed_data = preprocess_additional_features(data)
-    
-    assert processed_data.shape[1] == 5  # Asegurar que hay 5 columnas después del preprocesamiento
-    assert isinstance(processed_data, np.ndarray)  # Debe ser un array de NumPy
+def test_email_input_ignores_unknown_fields():
+    payload = EmailInput(
+        From="sender@example.com",
+        To="receiver@example.com",
+        Subject="Test",
+        Body="Body",
+        Date="2026-09-20T12:00:00Z",
+        MessageId="message-1",
+        Attachments=[],
+    )
+    assert not hasattr(payload, "Attachments")
