@@ -24,6 +24,7 @@ RUN python download_model.py
 
 COPY app.py .
 COPY auth.py .
+COPY training_compat.py .
 COPY utils.py .
 COPY models/ ./models/
 COPY objects/ ./objects/
